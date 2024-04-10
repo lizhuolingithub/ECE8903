@@ -230,8 +230,8 @@ if __name__ == "__main__":
     # 默认基础调试信息
     stock_code = "XLE"
     algorithm = "SARIMAX"
-    start_date = datetime.strptime("2023-10-1", "%Y-%m-%d").date()
-    end_date = datetime.strptime("2023-12-31", "%Y-%m-%d").date()
+    start_date = datetime.strptime("2020-1-1", "%Y-%m-%d").date()
+    end_date = datetime.strptime("2020-3-31", "%Y-%m-%d").date()
 
     # 连接读取预测数据库信息
     db_connection_forecast = pymysql.connect(**db_config)  # 创建连接

@@ -162,7 +162,7 @@ def job():
 
         start_date = get_start_date(cursor, stock_code)
 
-        update_stock_data(cursor,db_connection ,stock_code, start_date)
+        update_stock_data(cursor, db_connection, stock_code, start_date)
 
     cursor.close()
     db_connection.close()
