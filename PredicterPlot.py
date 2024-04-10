@@ -74,7 +74,7 @@ def plot_individual_forecast(df, predict_day, algorithm, color, stock_code):
     plt.gcf().autofmt_xdate()
 
     # 保存图片
-    plt.savefig(f'{algorithm}_{stock_code}_{predict_day}.png')
+    plt.savefig(f'{algorithm}_{stock_code}_{predict_day}.svg')
 
     plt.grid(True)
     plt.show()
