@@ -19,15 +19,22 @@ import pymysql
 import schedule
 import time
 from datetime import datetime, timedelta
+from dbutils.pooled_db import PooledDB
+import time
+import pandas as pd
+from sqlalchemy import create_engine, text
+from apscheduler.schedulers.background import BackgroundScheduler
 
 
+
+########################################################################################################################
+# 数据库SQL读写建表部分
+#########################################################################################################################
 
 # 初始的待生成策略数据各股票表建表函数，检测如果数据库内无对应表格则执行该函数
 def create_tables(cursor, stock_code):
     create_table_query = \
         f"""
-        #
-        #
         CREATE TABLE IF NOT EXISTS {stock_code}_strategy(
         `Date` date NOT NULL COMMENT '交易日期',
         `FastAvg` float DEFAULT NULL COMMENT '12天快速移动平均线',
@@ -37,21 +44,22 @@ def create_tables(cursor, stock_code):
         `MA` float DEFAULT NULL COMMENT '布林带均值的9天移动平均',
         `BollingerUp` float DEFAULT NULL COMMENT '股价加上20天内价格的标准差',
         `BollingerDown` float DEFAULT NULL COMMENT '股价减去20天内价格的标准差',
+        `BollingerChannel` float DEFAULT NULL COMMENT '股价的五个通道分类，把布林带分成5个部分从下到上值为0-7，7个状态，0在布林带下，6在布林带上',
         `RSI` float DEFAULT NULL COMMENT 'Relative Strength Index相对强度指标',
-        `RSIchannel` float DEFAULT NULL COMMENT 'RSIchannel RSI 0-100 将其映射为 1-5',
-        `Doji` float DEFAULT NULL COMMENT '十字K线，1为是，0为否',
+        `RSIChannel` float DEFAULT NULL COMMENT 'RSI 0-100 将其映射为 1-5',
+        `Doji` float DEFAULT NULL COMMENT '检测是否十字星Doji，1 墓碑Doji  2 蜻蜓Doji  3 长脚Doji  4 普通Doji   0 其他不是Doji的情况',
         `ADX` float DEFAULT NULL COMMENT '平均方向指数（Average Directional Index, ADX)',
         `MACDsign` float DEFAULT NULL COMMENT 'MACD信号 1 2 分别为上穿下，下穿上，0即没有',
-        `Channel` float DEFAULT NULL COMMENT '股价的五个通道分类，把布林带分成5个部分从下到上值为0-7，7个状态，0在布林带下，6在布林带上',
         `K` float DEFAULT NULL COMMENT '随机振荡器（Stochastic Oscillator ）的K线',
         `D` float DEFAULT NULL COMMENT '随机振荡器（Stochastic Oscillator ）的D线',
+        `KDsign` float DEFAULT NULL COMMENT '随机振荡器（Stochastic Oscillator ）KD线的上下穿行，1 代表K线从下穿上D线，2 代表K线从上穿下D线，0即没有',
         `CCI` float DEFAULT NULL COMMENT '商品通道指数（Commodity Channel Index, CCI）75%的价格变动位于正负100之间的CCI值',
         `ROC` float DEFAULT NULL COMMENT 'Rate-of-Change, ROC）衡量价格变化幅度的指标',
         `WilliamsR` float DEFAULT NULL COMMENT '威廉姆斯%R（Williams %R）动量指标，识别超买和超卖条件',
         `OBV` float DEFAULT NULL COMMENT '均衡交易量（OBV） On Balance Volume 衡量买卖压力的技术指标，基于成交量的变化来预测价格趋势',
         `Klinger` float DEFAULT NULL COMMENT '克林格指标 Klinger Indicator 判断价格趋势的强度和买卖信号',
         `CMF` float DEFAULT NULL COMMENT '查金资金流（CMF）Chaikin Money Flow 资金在股市中的流入和流出情况',
-        `CandleIndi` float DEFAULT NULL COMMENT '复杂蜡烛图指标 Candlestick Indicators 黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击 1-5',
+        `ComplexDoji` float DEFAULT NULL COMMENT '复杂蜡烛图指标 Candlestick Indicators 黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击，晨曦之星 1-6',
         PRIMARY KEY (`Date` DESC),
         UNIQUE KEY `date` (`Date`) USING BTREE
         )
@@ -64,8 +72,6 @@ def read_db(cursor, stock_code, start_time):
     try:
         formatted_time = start_time.strftime("%Y-%m-%d")  # 确保时间格式正确（防止SQL注入）
         query = f"""
-                #
-                #
             SELECT Date, Open, High, Low, Close, AdjClose, Volume
             FROM {stock_code}_base
             WHERE Date >= DATE_SUB(%s, INTERVAL 60 DAY) #读取时间开始前30天的数据
@@ -84,108 +90,108 @@ def read_db(cursor, stock_code, start_time):
 
 # 将添加好的策略信息字段写入到数据库当中
 def update_stock_data(stock_code, stock_table_df, gotime, cursor, db_connection):
-    for index, row in stock_table_df.iterrows():
-        # 确保 index_date 和 gotime 都是 datetime.date 类型进行比较
-        index_date = index.date() if isinstance(index, datetime) else index
-        if index_date >= gotime:  # 只有大于或等于开始更新的时间的数据才执行插入
-            insert_query = f"""
-            #RSIchannel
-            #
-           INSERT INTO {stock_code}_strategy 
-           (Date, FastAvg, SlowAvg, MACD, SignalLine, MA, BollingerUp, BollingerDown, RSI, RSIchannel, Doji, ADX, MACDsign, Channel,
-           K, D, CCI, ROC, WilliamsR, OBV, Klinger, CMF, CandleIndi) 
-        VALUES ('{index_date}', {row['FastAvg']}, {row['SlowAvg']}, {row['MACD']}, {row['SignalLine']}, {row['MA']},  {row['BollingerUp']},
-         {row['BollingerDown']}, {row['RSI']}, {row['RSIchannel']}, {row['Doji']}, {row['ADX']}, {row['MACDsign']}, {row['Channel']}, {row['K']}, 
-         {row['D']}, {row['CCI']}, {row['ROC']}, {row['WilliamsR']}, {row['OBV']}, {row['Klinger']}, {row['CMF']}, {row['CandleIndi']} )
+    # 准备批量插入的SQL语句，同时处理重复键的情况
+    insert_query = f"""
+        INSERT INTO {stock_code}_strategy 
+        (Date, FastAvg, SlowAvg, MACD, SignalLine, MA, BollingerUp, BollingerDown, BollingerChannel, RSI, RSIChannel, Doji, ADX, MACDsign, 
+         K, D, KDsign, CCI, ROC, WilliamsR, OBV, Klinger, CMF, ComplexDoji) 
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
-            FastAvg={row['FastAvg']},
-            SlowAvg={row['SlowAvg']},
-            MACD={row['MACD']},
-            SignalLine={row['SignalLine']},
-            MA={row['MA']},
-            BollingerUp={row['BollingerUp']},
-            BollingerDown={row['BollingerDown']},
-            RSI={row['RSI']},
-            RSIchannel={row['RSIchannel']},
-            Doji={row['Doji']},
-            ADX={row['ADX']},
-            MACDsign={row['MACDsign']},
-            Channel={row['Channel']},
-            K={row['K']}, 
-            D={row['D']}, 
-            CCI={row['CCI']}, 
-            ROC={row['ROC']}, 
-            WilliamsR={row['WilliamsR']}, 
-            OBV={row['OBV']}, 
-            Klinger={row['Klinger']}, 
-            CMF={row['CMF']}, 
-            CandleIndi={row['CandleIndi']}
-            """
-            cursor.execute(insert_query)
-            db_connection.commit()
+        FastAvg=VALUES(FastAvg),
+        SlowAvg=VALUES(SlowAvg),
+        MACD=VALUES(MACD),
+        SignalLine=VALUES(SignalLine),
+        MA=VALUES(MA),
+        BollingerUp=VALUES(BollingerUp),
+        BollingerDown=VALUES(BollingerDown),
+        BollingerChannel=VALUES(BollingerChannel),
+        RSI=VALUES(RSI),
+        RSIChannel=VALUES(RSIChannel),
+        Doji=VALUES(Doji),
+        ADX=VALUES(ADX),
+        MACDsign=VALUES(MACDsign),
+        K=VALUES(K),
+        D=VALUES(D),
+        KDsign=VALUES(KDsign),
+        CCI=VALUES(CCI),
+        ROC=VALUES(ROC),
+        WilliamsR=VALUES(WilliamsR),
+        OBV=VALUES(OBV),
+        Klinger=VALUES(Klinger),
+        CMF=VALUES(CMF),
+        ComplexDoji=VALUES(ComplexDoji)
+    """
+
+    # 创建一个元组列表，包含所有要插入的数据
+    data_to_insert = [
+        (index.date() if isinstance(index, datetime) else index, row['FastAvg'], row['SlowAvg'], row['MACD'], row['SignalLine'], row['MA'],
+         row['BollingerUp'], row['BollingerDown'], row['BollingerChannel'], row['RSI'], row['RSIChannel'], row['Doji'], row['ADX'], row['MACDsign'],
+         row['K'], row['D'], row['KDsign'], row['CCI'], row['ROC'], row['WilliamsR'], row['OBV'], row['Klinger'], row['CMF'], row['ComplexDoji'])
+        for index, row in stock_table_df.iterrows()
+        if (index.date() if isinstance(index, datetime) else index) >= gotime
+    ]
+
+    # 使用 executemany 进行批量插入操作
+    if data_to_insert:  # 确保有数据插入
+        cursor.executemany(insert_query, data_to_insert)
+        db_connection.commit()  # 一次性提交所有插入操作
 
 
 ########################################################################################################################
 # 数据时间控制部分
 #########################################################################################################################
 
-# TODO 这个还待改善，改成原始数据库和策略数据库的时间轴做减运算，最后得到一个待更新的时间轴序列，然后根据该序列进行计算策略指标并更新
-# TODO 从而能解决假设策略数据库不连续的问题，算了，感觉好复杂，如果不连续的话就直接删了重来就行了，应该不会存在吧
-
-# 获得数据库当中最老的日期，以备后续使用
-def get_oldest_date(cursor, stock_code, dbname):
+# 获得数据库当中最新和最老的日期，以备后续使用
+def get_date_range(cursor, stock_code, suffix):
     try:
-        query = f"SELECT MIN(Date) FROM {stock_code}_{dbname}"
+        # 构建查询最早和最晚日期的SQL语句
+        query = f"SELECT MIN(Date), MAX(Date) FROM {stock_code}_{suffix}"
+
+        # 执行查询
         cursor.execute(query)
         result = cursor.fetchone()
-        return result[0] if result and result[0] is not None else None
-    except Exception as e:
-        print(f"Error fetching oldest date for {stock_code}_{dbname}: {e}")
-        return None
+        if result:
+            oldest_date = result[0] if result[0] is not None else None
+            latest_date = result[1].strftime("%Y-%m-%d") if result[1] is not None else None
+        else:
+            oldest_date, latest_date = None, None
+        # 返回一个包含最早和最晚日期的元组
+        return oldest_date, latest_date
 
-
-# 获得数据库当中最新的日期，以备后续使用
-def get_latest_date(cursor, stock_code, dbname):
-    try:
-        query = f"SELECT MAX(Date) FROM {stock_code}_{dbname}"
-        cursor.execute(query)
-        result = cursor.fetchone()
-        return result[0].strftime("%Y-%m-%d") if result and result[0] is not None else None
     except Exception as e:
-        print(f"Error fetching latest date for {stock_code}_{dbname}: {e}")
-        return None
+        print(f"Error fetching date range for {stock_code}_{suffix}: {e}")
+        return None, None
 
 
 # 根据基础信息数据库和提取信息数据库的最老和最新时间来确定开始更新的时间
-def get_gotime(cursor_basedata, cursor_strategy, stock_code):
+def get_update_time(cursor_read, cursor_update, read_suffix, update_suffix, stock_code, default):
     """
-    两个数据库，两个脚本，一个脚本更新基础信息，另一个脚本更新提取信息
-    更新提取信息的脚本要同时连接两个数据库，读取基础信息，写入提取信息
-    要根据两个脚本最老和最新时间的比较来更新提取信息
-    基础最老时间 > 提取最老时间（或者为空）---从基础最老时间开始更新
-    基础最新时间 < 提取最新时间 - --从提取最新时间开始更新
+    根据基础信息数据库和提取信息数据库的最老和最新时间来确定更新提取信息的开始时间
+    为了解决读取表和写入表的数据同步问题，防止多读取数据，也防止少读取数据
+    更新提取信息的脚本要同时连接读取信息和写入信息两个数据库
+    主要实现的逻辑：
+    读取表最老时间 > 写入表最老时间（或者为空）---从基础最老时间开始更新
+    读取表最新时间 < 写入表最新时间 - --从提取最新时间开始更新
     """
-    oldest_basedata = get_oldest_date(cursor_basedata, stock_code, "base")
-    latest_basedata = get_latest_date(cursor_basedata, stock_code, "base")
-    oldest_strategy = get_oldest_date(cursor_strategy, stock_code, "strategy")
-    latest_strategy = get_latest_date(cursor_strategy, stock_code, "strategy")
 
-    # 默认开始更新时间
-    default_time = datetime.strptime("2014-01-03", "%Y-%m-%d").date()
+    oldest_read, latest_read = get_date_range(cursor_read, stock_code, read_suffix)
+    oldest_update, latest_update = get_date_range(cursor_update, stock_code, update_suffix)
 
-    if oldest_basedata is None:
-        # 如果基础数据的时间为空的话则返回默认时间，默认时间实际上就是基础数据库设定的最早时间
-        return default_time
-    elif oldest_strategy is None or oldest_basedata > oldest_strategy:
-        # 如果基础数据的最老时间更旧，从基础数据最老时间开始更新
-        return oldest_basedata
-    elif latest_strategy is not None and latest_basedata <= latest_strategy:
-        # 如果提取数据的最新时间不为空且早于基础数据的最新时间，从提取数据的最新时间减去一天开始更新
-        return datetime.strptime(latest_strategy, "%Y-%m-%d").date() - timedelta(days=1)
+    if oldest_read is None:
+        # 如果读取表的时间为空的话则返回默认时间，默认时间实际上就是人为设定的最早时间
+        return datetime.strptime(default, "%Y-%m-%d").date()
+
+    elif oldest_update is None or oldest_read > oldest_update:
+        # 如果读取表的最老时间更旧，从读取表最老时间开始更新
+        return oldest_read
+
+    elif latest_update is not None and latest_read <= latest_update:
+        # 如果写入表的最新时间不为空且早于读取表的最新时间，从写入表的最新时间减去一天开始更新
+        return datetime.strptime(latest_update, "%Y-%m-%d").date() - timedelta(days=1)
+
     else:
-        # 遇上其他情况，如基础数据库时间被策略数据库完全覆盖时，则从最新的时间谁最小减去一天开始更新
-        return datetime.strptime(min(latest_strategy, latest_basedata), "%Y-%m-%d").date() - timedelta(days=1)
-
+        # 遇上其他情况，如读取表时间被写入表完全覆盖时，则从最新的时间谁最小减去一天开始更新
+        return datetime.strptime(min(latest_update, latest_read), "%Y-%m-%d").date() - timedelta(days=1)
 
 ########################################################################################################################
 # 计算添加技术指标信息部分
@@ -425,46 +431,63 @@ def calculate_cmf(df, window=20):
 """
 检测特定的蜡烛图形态并在新列中标注。
 参数-df: DataFrame，包含股票交易数据，至少包含'Open', 'High', 'Low', 'Close'列。
-返回-Series: 标注了蜡烛图指标的Series，1-5分别代表黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击。
+返回-Series: 标注了蜡烛图指标的Series，1-6分别代表黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击，晨曦之星
 """
 def detect_candlestick_patterns(df):
     patterns = pd.Series(index=df.index, data=0)  # 初始化蜡烛图指标列为0
 
-    # 简化的指标检测逻辑
-    # 注意：以下逻辑是基于标准形态的简化版本，实际检测可能需要更复杂的条件判断
+    # 预先计算常见条件以简化条件检查
+    bull_candle = df['Close'] > df['Open']
+    bear_candle = df['Close'] < df['Open']
+    upper_shadow = df['High'] - np.maximum(df['Close'], df['Open'])
+    lower_shadow = np.minimum(df['Close'], df['Open']) - df['Low']
+    body_size = np.abs(df['Close'] - df['Open'])
 
-    for i in range(2, len(df)):
-        # 黄昏之星
-        if df['Close'].iloc[i - 2] > df['Open'].iloc[i - 2] and \
-                df['Close'].iloc[i - 1] < df['Open'].iloc[i - 1] and df['Low'].iloc[i - 1] > df['High'].iloc[i - 2] and \
-                df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i] < df['Close'].iloc[i - 2]:
-            patterns.iloc[i] = 1  # 黄昏之星
-        # 弃婴
-        # 注意：弃婴的检测需要考虑间隔，这里仅作为示例
-        elif df['Close'].iloc[i - 2] < df['Open'].iloc[i - 2] and \
-                df['High'].iloc[i - 1] < df['Low'].iloc[i - 2] and df['High'].iloc[i - 1] < df['Low'].iloc[i] and \
-                df['Close'].iloc[i] > df['Open'].iloc[i]:
-            patterns.iloc[i] = 2  # 弃婴
-        # 两只乌鸦
-        # 注意：实际检测可能更复杂
-        elif (df['Open'].iloc[i - 2] < df['Close'].iloc[i - 2] < df['Open'].iloc[i - 1] and df['Close'].iloc[i - 1] <
-              df['Open'].iloc[i - 1] and df['Open'].iloc[i] > df['Close'].iloc[i - 1] and df['Close'].iloc[i] < df['Open'].iloc[i]):
-            patterns.iloc[i] = 3  # 两只乌鸦
-        # 三只乌鸦
-        elif df['Close'].iloc[i - 2] > df['Open'].iloc[i - 2] and \
-                df['Close'].iloc[i - 1] < df['Open'].iloc[i - 1] and df['Close'].iloc[i - 1] < df['Close'].iloc[
-            i - 2] and \
-                df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i] < df['Close'].iloc[i - 1]:
-            patterns.iloc[i] = 4  # 三只乌鸦
-        # 三线打击
-        # 注意：这个模式通常更复杂，以下仅为示例
-        elif df['Close'].iloc[i - 2] < df['Open'].iloc[i - 2] and \
-                df['Close'].iloc[i - 1] < df['Open'].iloc[i - 1] and df['Close'].iloc[i - 1] < df['Close'].iloc[
-            i - 2] and \
-                df['Close'].iloc[i] > df['Open'].iloc[i - 2]:
-            patterns.iloc[i] = 5  # 三线打击
+    # 黄昏之星
+    evening_star_cond = (
+        bull_candle.shift(2) & bear_candle.shift(1) & bear_candle &
+        (lower_shadow.shift(1) > body_size.shift(2) * 0.5) &  # 第一根蜡烛和中间一根蜡烛之间的弱差距
+        (df['Close'] < df['Open'].shift(2))
+    )
+    patterns[evening_star_cond] = 1
+
+    # 弃婴
+    abandoned_baby_cond = (
+        bear_candle.shift(2) & (df['High'].shift(1) < df['Low'].shift(2)) & (df['High'].shift(1) < df['Low']) &
+        bull_candle
+    )
+    patterns[abandoned_baby_cond] = 2
+
+    # 两只乌鸦
+    two_crows_cond = (
+        bull_candle.shift(2) & bear_candle.shift(1) & bear_candle &
+        (df['Open'].shift(1) < df['Close'].shift(2)) & (df['Close'] < df['Open'])
+    )
+    patterns[two_crows_cond] = 3
+
+    # 三只乌鸦
+    three_black_crows_cond = (
+        bull_candle.shift(2) & bear_candle.shift(1) & bear_candle &
+        (df['Close'].shift(1) < df['Open'].shift(1)) & (df['Close'] < df['Close'].shift(1))
+    )
+    patterns[three_black_crows_cond] = 4
+
+    # 三线打击
+    three_line_strike_cond = (
+        bear_candle.shift(2) & bear_candle.shift(1) & bull_candle &
+        (df['Close'] > df['Open'].shift(2))
+    )
+    patterns[three_line_strike_cond] = 5
+
+    # 晨曦之星
+    morning_star_cond = (
+        bull_candle.shift(2) & bear_candle.shift(1) & bull_candle &
+        (df['Close'].shift(1) > df['Low'].shift(2)) & (df['Close'] > df['Open'].shift(2))
+    )
+    patterns[morning_star_cond] = 6
 
     return patterns
+
 
 
 """
@@ -480,7 +503,23 @@ def map_rsi(rsi):
     mapped_rsi = int(np.ceil((rsi - rsi_min) / (rsi_max - rsi_min) * 4 + 1))
     return mapped_rsi
 
+"""
+计算随机振荡器的交叉
+参数：df:DataFrame，包含表示随机振荡器值的列“K”和“D”。
+返回：系列：计算的随机交叉信号，1表示D以上的K交叉，2表示D以下的K交叉；0表示无交叉。
+"""
+def calculate_stochastic_crossovers(df):
 
+    kd_sign = np.where(
+        (df['K'] > df['D']) & (df['K'].shift(1) < df['D'].shift(1)),
+        1,  # 1 代表K线从下穿上D线
+        np.where(
+            (df['K'] < df['D']) & (df['K'].shift(1) > df['D'].shift(1)),
+            2,  # 2 代表K线从上穿下D线
+            0  # 0即没有
+        )
+    )
+    return pd.Series(kd_sign, index=df.index)
 
 """
 从股票交易表格中计算并添加交易策略信息字段。
@@ -512,7 +551,7 @@ def signaling_strategy(stock_table):
     df['RSI'] = calculate_RSI(df, window=14)
 
     # 计算RSI channel 映射RSI到1-5范围
-    df['RSIchannel'] = df['RSI'].apply(map_rsi)
+    df['RSIChannel'] = df['RSI'].apply(map_rsi)
 
     # Doji星计算 1墓碑Doji 2蜻蜓Doji 3长脚Doji 4普通Doji  应用定义的函数到DataFrame
     df['Doji'] = df.apply(classify_doji, axis=1)
@@ -521,10 +560,13 @@ def signaling_strategy(stock_table):
     df['ADX'] = calculate_adx(df, window=14)
 
     # 计算基于布林带的Channel通道
-    df['Channel'] = df.apply(calculate_channel, axis=1)
+    df['BollingerChannel'] = df.apply(calculate_channel, axis=1)
 
     # 计算随机振荡器 Stochastic Oscillator
     df[['K', 'D']] = calculate_stochastic_oscillator(df)
+
+    # 计算K D线 是否上下交叉的信号
+    df['KDsign'] = calculate_stochastic_crossovers(df)
 
     # 商品通道指数 计算CCI
     df['CCI'] = calculate_cci(df, window=20)
@@ -547,7 +589,7 @@ def signaling_strategy(stock_table):
     df['CMF'] = calculate_cmf(df, window=20)
 
     # 计算复杂蜡烛图指标 Candlestick Indicators 黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击
-    df['CandleIndi'] = detect_candlestick_patterns(df)
+    df['ComplexDoji'] = detect_candlestick_patterns(df)
 
     # 将 NaN 值替换为0
     df.fillna(0, inplace=True)
@@ -575,17 +617,19 @@ def doer():
     for stock_code in stock_codes:
         create_tables(cursor_strategy, stock_code)  # 先在写入策略信息数据库创建对应表格
 
-        gotime = get_gotime(cursor_basedata, cursor_strategy, stock_code)  # 求得更新开始的时间
-        print("\n针对股票代码为", stock_code, "的开始更新时间是", gotime)
+        # 求得更新开始的时间
+        update_time = get_update_time(cursor_basedata, cursor_strategy, read_suffix, update_suffix, stock_code, default)
+        print("\n针对股票代码为", stock_code, "的开始更新时间是", update_time)
 
-        stock_data = read_db(cursor_basedata, stock_code, gotime)  # 从求得的开始时间开始读取基础信息数据库里面的原始股价信息
+        stock_data = read_db(cursor_basedata, stock_code, update_time)  # 从求得的开始时间开始读取基础信息数据库里面的原始股价信息
         print("读取的原始股票信息为： \n", stock_data)
 
         stock_data_df = signaling_strategy(stock_data)  # 调用生成策略数据函数，在原有的股价信息表里面添加计算出来的生成策略数据
         print("计算的生成策略数据表为： \n", stock_data_df)
 
-        update_stock_data(stock_code, stock_data_df, gotime, cursor_strategy,
-                          db_connection_strategy)  # 这个df不知道什么问题 然后将生成策略数据更新到数据库里面
+        # 将生成策略数据更新到数据库里面
+        update_stock_data(stock_code, stock_data_df, update_time, cursor_strategy, db_connection_strategy)
+
 
     print("\n本次任务结束，已经完全将策略数据更新完毕\n")
 
@@ -596,7 +640,6 @@ def doer():
     # 关闭上面的数据库连接，任务开始建立连接，任务结束就关闭连接
 
 
-
 if __name__ == "__main__":
 
     # 选好的股票代码 16个精选的股票和ETF基金指数
@@ -604,10 +647,20 @@ if __name__ == "__main__":
                    'VUG', 'XLE']
 
     # 设置数据库的参数 连接数据库的信息（连接待基础数据的数据库）
-    db_config = {"host": "10.5.0.18", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "basedata"}
+    db_config = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "basedata"}
 
     # 设置数据库的参数 连接数据库的信息（连接待生成策略数据的数据库）
-    db_config_strategy = {"host": "10.5.0.18", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "strategy"}
+    db_config_strategy = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "strategy"}
+
+    # "host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456"
+    # "host": "8.147.99.223", "port": 3306, "user": "lizhuolin", "password": "&a3sFD*432dfD!o0#3^dP2r2d!sc@"
+
+    # 读取表和更新表的后缀
+    read_suffix = 'base'
+    update_suffix = 'strategy'
+
+    # 默认开始的更新时间
+    default = '2014-01-01'
 
     # 立即执行一次提取任务
     doer()

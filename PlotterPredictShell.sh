@@ -19,7 +19,7 @@ done
 
 
 # 改变这个sh脚本的权限，让其能写和调用
-# chmod +x run_sp.sh
+# chmod +x ForecastShell.sh
 
 # 直接去运行这个sh脚本
-# ./run_sp.sh
+# ./ForecastShell.sh

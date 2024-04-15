@@ -109,11 +109,11 @@ def plotter(algorithm, start_time, predict_time, end_time, stock_code):
 def parse_arguments():
     """解析命令行参数并返回解析后的参数."""
     parser = argparse.ArgumentParser(description='Stock prediction script')
-    parser.add_argument('--algorithm', type=str, default='LSTM', help='Prediction algorithm')
+    parser.add_argument('--algorithm', type=str, default='SARIMAX', help='Prediction algorithm')
     parser.add_argument('--start', type=str, default='2016-01-01', help='Start date')
     parser.add_argument('--predict', type=str, default='2019-01-01', help='Prediction date')
     parser.add_argument('--end', type=str, default='2023-12-31', help='End date')
-    parser.add_argument('--stock_code', type=str, default='amzn', help='Stock code')
+    parser.add_argument('--stock_code', type=str, default='xle', help='Stock code')
 
     return parser.parse_args()
 
@@ -121,7 +121,7 @@ def parse_arguments():
 if __name__ == "__main__":
 
     # 设置数据库的参数 连接数据库的信息（连接预测信息数据的数据库）
-    db_config_forecast = {"host": "10.5.0.18", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "forecast"}
+    db_config_forecast = {"host": "10.5.0.18", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "forecast_gbm"}
 
     args = parse_arguments()
     plotter(args.algorithm, args.start, args.predict, args.end, args.stock_code)

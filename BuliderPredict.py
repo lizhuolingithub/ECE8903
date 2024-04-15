@@ -199,21 +199,22 @@ SELECT
     s.MA,
     s.BollingerUp,
     s.BollingerDown,
+    s.BollingerChannel,
     s.RSI,
-    s.RSIchannel,
+    s.RSIChannel,
     s.Doji,
     s.ADX,
     s.MACDsign,
-    s.Channel,
     s.K,
     s.D,
+    s.KDsign,
     s.CCI,
     s.ROC,
     s.WilliamsR,
     s.OBV,
     s.Klinger,
     s.CMF,
-    s.CandleIndi
+    s.ComplexDoji
 FROM
     basedata.{stock_code}_base base
     RIGHT JOIN {stock_code}_predict_5d a ON base.Date = a.Date

@@ -39,26 +39,22 @@ import argparse
 from pandas.tseries.offsets import BDay
 
 
+########################################################################################################################
+# 预测算法部分
+#########################################################################################################################
+
+
 # SARIMAX预测函数，分别预测未来5 20 60天的数据 也就是周 月 季度的股价数据
 def SARIMAX_forecast(stock_base, predict_day):
     # TODO 这个地方还需要改进，未来的日期只是连续未来的日期，并没有考虑节假日，要设定为未来多少天的交易日比较好
     # TODO 然后也许可以添加一些经济数据作为预测的外生性变量
 
-    # 将原来的时间序列转成数值类型，并输入到拟合模型中作为外生性季节变量
-    stock_dates = pd.to_datetime(stock_base['Date'])
-    exog_fit = pd.to_numeric(stock_dates.dt.strftime('%Y%m%d').astype(int))
-
-    # 设置未来日期并转为数值类型，作为预测时的外生性季节变量
-    future_dates = pd.date_range(start=stock_base['Date'].max() + pd.Timedelta(days=1), periods=predict_day, freq='B')
-    exog_forecast = pd.to_numeric(future_dates.strftime('%Y%m%d').astype(int))
-
     # 拟合模型的过程
-    model = SARIMAX(stock_base['Close'], order=(1, 1, 1), seasonal_order=(1, 1, 1, predict_day), trend='t', exog=exog_fit)
+    model = SARIMAX(stock_base['Close'], order=(1, 1, 1), seasonal_order=(0, 0, 0, 0), trend='t')
     results = model.fit(disp=False)
 
     # Make predictions for the next set days
-    forecast = results.forecast(predict_day, exog=exog_forecast)
-
+    forecast = results.forecast(predict_day)
     return forecast
 
 
@@ -173,6 +169,12 @@ def GBM_forecast(price_base, predict_days=5, mu=0.05, sigma=0.2):
         price_forecast = pd.DataFrame(price_paths)
 
     return price_forecast
+
+
+########################################################################################################################
+# 数据库信息读写部分
+#########################################################################################################################
+
 
 # 读取基础数据库中的股价和日期数据
 def read_db_base(cursor, stock_code, start_time, end_time):
@@ -320,87 +322,120 @@ def update_forecast(cursor, db_connection, stock_code, date_close, forecast, alg
     db_connection.commit()
 
 
+# 创建连接池函数 可以复用
+def create_db_pool(host, port, user, password, db_name):
+    return PooledDB(
+        creator=pymysql,
+        maxconnections=10,
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=db_name
+    )
 
+########################################################################################################################
+# 主要函数操作逻辑部分
+#########################################################################################################################
+
+
+# 根据输入算法类别输入预测数据调用相应的预测算法，并返回预测结果
+def do_forecast(predict_day, rolling_stock, algorithm):
+    # 此处是算法预测的封装
+    if algorithm == "SARIMAX":
+        forecast = SARIMAX_forecast(rolling_stock, predict_day)
+    elif algorithm == "LSTM":
+        forecast = LSTM_forecast(rolling_stock, predict_day)
+    elif algorithm == "TimeGPT":
+        forecast = TimeGPT_forecast(rolling_stock, predict_day)
+    elif algorithm == "GBM":
+        forecast = GBM_forecast(rolling_stock, predict_day)
+    else:
+        raise ValueError("Unsupported algorithm specified")
+    return forecast
+
+"""
+从数据库中获取并准备股票数据。返回整个所需数据集的时间索引和股价数据
+参数:
+    - cursor: 数据库游标。
+    - stock_code: 股票代码。
+    - start_time: 数据获取的开始时间。
+    - predict_time: 预测开始时间。
+    - end_time: 数据获取的结束时间。
+返回:
+    - time_index: 时间索引数据，不包含股价。
+    - all_stock_data: 所有股票数据，包含日期和股价。
+"""
+def fetch_prepare_data(cursor, stock_code, start_time, predict_time, end_time):
+
+    # 从基础数据数据库中读取指定时间范围内的股票数据，返回时间索引数据
+    time_index = read_db_base(cursor, stock_code, predict_time, end_time)
+    time_index = pd.DataFrame(time_index)
+
+    # 将获取的数据转换为pandas DataFrame，并移除'Close'列，因为这里只需要日期信息
+    time_index.drop('Close', axis=1, inplace=True)
+    time_index['Date'] = pd.to_datetime(time_index['Date'])
+
+    # 读取指定时间范围内的全部股票数据
+    all_stock_data = read_db_base(cursor, stock_code, start_time, end_time)
+    all_stock_data = pd.DataFrame(all_stock_data)
+    all_stock_data['Date'] = pd.to_datetime(all_stock_data['Date'])
+
+    return time_index, all_stock_data
+
+
+"""
+本质上就是先读取整个时间范围内的股价和时间轴数据，然后就从预测开始时间到结束时间一天一天加入循环并生成预测数据的结果在写入到数据库中
+"""
 # 执行预测的do函数，输入predict_day，algorithm，还有时间自动拉取数据执行预测函数并讲预测结果存到数据库中
-# predict_day 就是要预测的时间 5d 20d 60d
-# algorithm 就是要使用的预测算法，SARIMAX LTSM TimeGPT
+# predict_day 就是要预测的时间步长 5 20 60 分别代表5天 20天 60天
+# algorithm 就是要使用的预测算法，SARIMAX LTSM TimeGPT GBM
+# start_time 整个训练数据集开始的时间，predict_time 要预测的数据开始的时间，end_time 预测结束的时间
+# 2016-01-01——2019-01-01——2023-12-31  即从2016年的数据开始读取，第一次预测是读取2016-2019的数据预测2019-01-01的结果，然后数据集和预测时间逐渐递增直到end_time
 def do(predict_day, algorithm, start_time, predict_time, end_time, stock_code, basedata_pool, forecast_pool):
-
-    # 输出一下目前在跑的预测任务的信息
+    # 打印当前正在执行的预测任务的相关信息，包括股票代码、使用的算法、预测的天数、预测的时间范围等。
     print(f"Predicting for {stock_code} using {algorithm} for {predict_day} days from {start_time} to {end_time} with prediction at {predict_time}")
 
-    # 连接读取基础信息数据库信息
-    db_connection_basedata = basedata_pool.connection()    # 创建连接
-    cursor_basedata = db_connection_basedata.cursor()  # 建立游标对象
+    # 使用with语句管理数据库连接和游标，确保资源正确关闭
+    with basedata_pool.connection() as db_connection_basedata, db_connection_basedata.cursor() as cursor_basedata:
+        # 通过封装的函数获取并准备数据
+        time_index, all_stock_data = fetch_prepare_data(cursor_basedata, stock_code, start_time, predict_time, end_time)
 
-    # 读取待预测时间区间时间索引数据
-    time_index = read_db_base(cursor_basedata, stock_code, predict_time, end_time)
-    time_index = pd.DataFrame(time_index)
-    # 去除Close股价列，仅保留时间
-    time_index.drop('Close', axis=1, inplace=True)
-
-    # 读取从开始到结束到全部数据，这样只需要读取一次就好
-    all_stock_data = read_db_base(cursor_basedata, stock_code, start_time, end_time)
-
-    all_stock_data = pd.DataFrame(all_stock_data).copy()  # 明确创建一个副本来避免警告
-    all_stock_data['Date'] = pd.to_datetime(all_stock_data['Date'])  # 确保日期列是 datetime 类型
-    time_index['Date'] = pd.to_datetime(time_index['Date'])  # 确保日期列是 datetime 类型
-
-    # 归还连接给连接池 基础数据库的 同时关闭数据库游标
-    cursor_basedata.close()
-    db_connection_basedata.close()
-
-    # 直接迭代数据框的行 循环轮转的日期
+    # 对每个在时间索引中的日期进行循环处理。
     for index in range(len(time_index)):
-
-        # 在这里执行对每个日期的操作
+        # 获取当前循环到的日期。
         rolling_day = time_index.iloc[index]['Date']
-
-        # 根据rolling_day从预先读取的总数据集中构建滚动数据子集 从2016-01-01，到2023年的每一个交易日循环读取一遍
+        # 根据当前日期筛选出到这一天为止的所有股票数据，用于模型的输入。
         rolling_stock = all_stock_data[all_stock_data['Date'] <= rolling_day]
-
-        # 使用 tail() 方法获取数据框的尾部数据（最后一行）也就是当天的日期和股价 用于后面写入数据库当中的基础信息
+        # 获取筛选数据的最后一行，包含最新的股票价格和日期，用于后续的数据记录和输出。
         date_close = rolling_stock.tail(1)
-        print("\n",date_close)
+        # 打印该日期的股票数据。
+        print("\n", date_close)
 
-        # 初始化forecast变量，为后续异常处理做准备，创建一个长度为 predict_day，所有值为-1的pd.Series
+        # 初始化预测结果为一个指定长度的、元素为-1的序列，以处理可能的异常情况。
         forecast = pd.Series([-1] * predict_day, dtype='float')
-        try:
-            # 将股价数据的数据放入函数进行预测
-            if algorithm == "SARIMAX":
-                forecast = SARIMAX_forecast(rolling_stock, predict_day)
-            elif algorithm == "LSTM":
-                forecast = LSTM_forecast(rolling_stock, predict_day)
-            elif algorithm == "TimeGPT":
-                forecast = TimeGPT_forecast(rolling_stock, predict_day)
-            elif algorithm == "GBM":
-                forecast = GBM_forecast(rolling_stock, predict_day)
 
-        # 预测的过程可能会出现异常，在此进行异常处理，将异常的信息打印出来并写入到csv表格中，然后接着跑后面的预测防止因为一个异常中断整个程序
+        try:
+            # 根据指定的算法调用对应的预测函数进行股价预测
+            forecast = do_forecast(predict_day, rolling_stock, algorithm)
+
         except Exception as e:
-            # 打开CSV文件，追加异常信息
+            # 如果预测过程中发生异常，将异常信息记录到CSV文件中，并在控制台输出错误。
             with open('exceptions_log.csv', 'a', newline='') as file:
                 writer = csv.writer(file)
-                # 写入异常股票的信息：股票代码，日期，预测天数，异常原因
                 writer.writerow([stock_code, date_close, predict_day, str(e)])
-            # 可选：打印异常信息到控制台或日志文件，以便调试
             print(f"{algorithm} Exception for stock {stock_code} on date {date_close} for {predict_day} days forecast: {e}", file=sys.stderr)
 
-        finally:
-
-            # 连接读取预测信息数据库信息
-            db_connection_forecast = forecast_pool.connection()   # 创建连接
-            cursor_forecast = db_connection_forecast.cursor()  # 建立游标对象
-
-            # 如果预测表格不存在的话就重新创建表格
+        # 使用with语句连接预测结果数据库，将预测结果存储进去。
+        with forecast_pool.connection() as db_connection_forecast, db_connection_forecast.cursor() as cursor_forecast:
+            # 如果必要的表格不存在，则创建。
             create_tables(cursor_forecast, stock_code, predict_day)
-            # 将预测到到数据更新到数据库当中
+            # 更新数据库，将预测结果写入。
             update_forecast(cursor_forecast, db_connection_forecast, stock_code, date_close, forecast, algorithm, predict_day)
 
-            # 归还连接给连接池 预测数据库的  同时关闭数据库游标
-            cursor_forecast.close()
-            db_connection_forecast.close()
-
+########################################################################################################################
+# 主函数参数提取部分
+#########################################################################################################################
 
 def parse_arguments():
     """解析命令行参数并返回解析后的参数."""
@@ -423,27 +458,17 @@ def parse_arguments():
     return parser.parse_args()
 
 
-
-# 创建连接池函数 可以复用
-def create_db_pool(host, port, user, password, db_name):
-    """创建并返回一个数据库连接池."""
-    return PooledDB(
-        creator=pymysql,
-        maxconnections=10,
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=db_name,
-    )
-
-
 if __name__ == "__main__":
+    # 解析参数
     args = parse_arguments()
 
     # 创建数据库连接池
     basedata_pool = create_db_pool(args.db_host, args.db_port, args.db_user, args.db_password, args.db_name_basedata)
     forecast_pool = create_db_pool(args.db_host, args.db_port, args.db_user, args.db_password, args.db_name_forecast)
 
-    # 执行主要的业务逻辑
+    # 执行主要的业务逻辑 do函数
     do(args.days, args.algorithm, args.start, args.predict, args.end, args.stock_code, basedata_pool, forecast_pool)
+
+    # 关闭连接池
+    basedata_pool.close()
+    forecast_pool.close()
