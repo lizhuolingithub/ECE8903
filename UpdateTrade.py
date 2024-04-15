@@ -62,8 +62,8 @@ def read_db(cursor, stock_code, start_time, algorithm):
         # SQL查询语句，选择特定字段和条件
         query = f"""
             SELECT 
-                Date, Close, PredictMax5d, PredictMin5d, PredictMax20d, PredictMin20d, 
-                PredictMax60d, PredictMin60d, BollingerChannel, MACDsign, Doji, 
+                Date, Close, PredictProfit5d, PredictLoss5d, PredictProfit20d, PredictLoss20d, PredictSlope20d,
+                PredictProfit60d, PredictLoss60d, PredictSlope60d, BollingerChannel, MACDsign, Doji, 
                 RSIChannel, ComplexDoji, KDsign, CCI, WilliamsR
             FROM 
                 {stock_code}_combined
@@ -78,8 +78,8 @@ def read_db(cursor, stock_code, start_time, algorithm):
 
         # 将查询结果转换为 DataFrame，并指定列名
         df = pd.DataFrame(result, columns=[
-            'Date', 'Close', 'PredictMax5d', 'PredictMin5d', 'PredictMax20d', 'PredictMin20d',
-            'PredictMax60d', 'PredictMin60d', 'BollingerChannel', 'MACDsign', 'Doji',
+            'Date', 'Close', 'PredictProfit5d', 'PredictLoss5d', 'PredictProfit20d', 'PredictLoss20d', 'PredictSlope20d',
+            'PredictProfit60d', 'PredictLoss60d', 'PredictSlope60d', 'BollingerChannel', 'MACDsign', 'Doji',
             'RSIChannel', 'ComplexDoji', 'KDsign', 'CCI', 'WilliamsR'
         ])
 
@@ -306,10 +306,13 @@ def calculate_transaction_signals(df):
             (df['Loss60day'] > -20)
     )
 
+    # TODO 这个卖出的信号还是很多，还是得想办法调整啊
     # 定义卖出信号的条件
     sell_signal = (
             (df['Point'] < 0) &
-            (df['Sell'] > 0)
+            (df['Sell'] > 0) &
+            ((df['Loss5day'] < -5) | (df['Loss20day'] < -10) & (df['Loss60day'] < -20)) |
+            ((df['PredictSlope20d'] < 0) & (df['PredictSlope60d'] < 0))
     )
 
     # 使用numpy select选择条件
@@ -351,6 +354,10 @@ def signaling_trade(stock_table, algorithm):
     # 状态F - RSI
     df['F'] = -1 * df['RSIChannel'] + 3
 
+
+    df['G'] = 0
+    df['H'] = 0
+    """
     # 状态G - 商品通道指数（Commodity Channel Index, CCI）
     df['G'] = np.where(df['CCI'] < -200, 2,
                        np.where(df['CCI'] < -100, 1,
@@ -359,7 +366,8 @@ def signaling_trade(stock_table, algorithm):
 
     # 状态H - 威廉姆斯%R
     df['H'] = np.where(df['WilliamsR'] < -80, 1,
-                       np.where(df['WilliamsR'] < -20, 0, -1))
+                       np.where(df['WilliamsR'] < -20, 0, -1))               
+    """
 
     # Point 也就是上述状态的点数之和
     df['Point'] = df[['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']].sum(axis=1)
@@ -374,14 +382,14 @@ def signaling_trade(stock_table, algorithm):
     df['ForecastAlgorithm'] = algorithm
 
     # 未来5天 20天 60天 预测最大收益
-    df['Profit5day'] = df['PredictMax5d'] - df['Close'] / df['Close'] * 100
-    df['Profit20day'] = df['PredictMax20d'] - df['Close'] / df['Close'] * 100
-    df['Profit60day'] = df['PredictMax60d'] - df['Close'] / df['Close'] * 100
+    df['Profit5day'] = df['PredictProfit5d']
+    df['Profit20day'] = df['PredictProfit20d']
+    df['Profit60day'] = df['PredictProfit60d']
 
     # 未来5天 20天 60天 预测最大损失
-    df['Loss5day'] = df['PredictMin5d'] - df['Close'] / df['Close'] * 100
-    df['Loss20day'] = df['PredictMin20d'] - df['Close'] / df['Close'] * 100
-    df['Loss60day'] = df['PredictMin60d'] - df['Close'] / df['Close'] * 100
+    df['Loss5day'] = df['PredictLoss5d']
+    df['Loss20day'] = df['PredictLoss20d']
+    df['Loss60day'] = df['PredictLoss60d']
 
     # 最终买卖持有信号判断
     df['Transaction'] = calculate_transaction_signals(df)
@@ -440,6 +448,9 @@ if __name__ == "__main__":
     # 设置数据库的参数 连接读取数据库和更新数据库
     db_config_forecast = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "forecast"}
     db_config_trade = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "trade"}
+
+    # "host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456"
+    # "host": "8.147.99.223", "port": 3306, "user": "lizhuolin", "password": "&a3sFD*432dfD!o0#3^dP2r2d!sc@"
 
     # 设置读取和更新两个数据库表名的后缀
     read_table_suffix = 'combined'
