@@ -32,7 +32,7 @@ def trade_simulation(df):
     """
     Simulate trades based on Transaction signals and calculate the cumulative return.
     """
-    initial_capital = 10000.0  # initial capital in dollars
+    initial_capital = 1000000  # initial capital in dollars
     shares = 0
     capital = initial_capital
     portfolio_values = []
@@ -62,57 +62,61 @@ def trade_simulation(df):
 
 
 
+"""
+Plots and saves the returns over time for the given stock_code, both displaying and saving the plot as an SVG file.
 
-#  将得出来的结果绘制成收益率时间图像
-def plotter(df, stock_code):
-    """
-    Plots and saves the returns over time for the given stock_code, both displaying and saving the plot as an SVG file.
-
-    Args:
+Args:
     df (DataFrame): DataFrame containing the trading data including 'Date' and 'Returns'.
     stock_code (str): Stock code to label the plot and name the file.
 
-    Enhancements in this version:
+Enhancements in this version:
     - Display the plot on screen for immediate viewing.
     - Save the plot in SVG format for high-quality reproduction.
     - Beautify the plot with grid, formatted date labels, and a descriptive legend.
-    """
-    # Create the directory if it doesn't exist
+ """
+#  将得出来的结果绘制成收益率时间图像
+def plotter(df, stock_code):
     save_dir = "PlotterTrade"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    # Set up the figure
-    plt.figure(figsize=(12, 6))
-    ax = plt.gca()  # Get current axis
+    # Setup the figure and axes
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    fig.patch.set_facecolor('white')  # 设置整个画布的背景颜色为白色
 
-    # Plot data
-    ax.plot(df['Date'], df['Returns'] * 100, label=f'Returns for {stock_code}', color='blue', linestyle='-')
+    # Plotting the returns on the primary y-axis
+    color = 'tab:red'
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('Returns (%)', color=color)
+    ax1.plot(df['Date'], df['Returns'] * 100, color=color, label='Returns (%)')
+    ax1.tick_params(axis='y', labelcolor=color)
+    ax1.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)  # 网格线更为细致、半透明
 
-    # Format the x-axis with month and week intervals for better granularity
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
-    ax.xaxis.set_minor_locator(mdates.WeekdayLocator())
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    plt.xticks(rotation=45)  # Rotate date labels for better visibility
+    # Create a second y-axis for the close prices
+    ax2 = ax1.twinx()
+    color = 'tab:blue'
+    ax2.set_ylabel('Close Price', color=color)
+    ax2.plot(df['Date'], df['Close'], color=color, label='Close Price')
+    ax2.tick_params(axis='y', labelcolor=color)
 
-    # Set labels and title
-    plt.xlabel('Date')
-    plt.ylabel('Returns (%)')
-    plt.title(f'Stock Trading Returns for {stock_code}')
-    plt.legend()
-    plt.grid(True)  # Enable grid for easier reading
+    # Formatting the x-axis with date format
+    ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
+    ax1.xaxis.set_major_formatter(mdates.ConciseDateFormatter(mdates.AutoDateLocator()))
+    plt.xticks(rotation=45)
+
+    # Adding title and legend
+    plt.title(f'Stock Trading Performance for {stock_code}')
+    fig.tight_layout()  # adjust subplots to give some room for the labels
 
     # Save the figure
-    file_path = os.path.join(save_dir, f"{stock_code}_returns.svg")
-    plt.savefig(file_path, format='svg', dpi=300)  # Save as SVG at 300 DPI
-
-    # Display the plot
-    plt.show()  # Show the plot in a GUI window
+    file_path = os.path.join(save_dir, f"{stock_code}_performance.svg")
+    plt.savefig(file_path, format='svg', dpi=300)
+    plt.show()
 
     # Close the plot to free up memory
     plt.close()
+    print(f"Plot saved as {file_path}")
 
-    print(f"Plot saved as {file_path}")  # Confirm file save
 
 
 
@@ -129,7 +133,7 @@ if __name__ == "__main__":
     # "host": "8.147.99.223", "port": 3306, "user": "lizhuolin", "password": "&a3sFD*432dfD!o0#3^dP2r2d!sc@"
 
 
-    start_date = datetime.strptime("2023-1-1", "%Y-%m-%d").date()
+    start_date = datetime.strptime("2019-1-1", "%Y-%m-%d").date()
     end_date = datetime.strptime("2023-12-31", "%Y-%m-%d").date()
 
     # 连接读取预测数据库信息

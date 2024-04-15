@@ -3,6 +3,7 @@
   <component name="SqlDialectMappings">
     <file url="file://$PROJECT_DIR$/DownloaderStockData.py" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/ForcastStock.py" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/PlotterTrade.py" dialect="GenericSQL" />
     <file url="file://$PROJECT_DIR$/UpdateStrategy.py" dialect="GenericSQL" />
     <file url="file://$PROJECT_DIR$/UpdateTrade.py" dialect="GenericSQL" />
   </component>

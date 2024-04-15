@@ -420,10 +420,10 @@ def doer():
         update_time = get_update_time(cursor_read, cursor_update, read_table_suffix, update_table_suffix, stock_code, default_time)
         print("\n针对股票代码为", stock_code, "的开始更新时间是", update_time)
 
-        stock_data = read_db(cursor_read, stock_code, update_time, "SARIMAX")  # 从求得的开始时间开始读取基础信息数据库里面的原始股价信息
+        stock_data = read_db(cursor_read, stock_code, update_time, algorithm)  # 从求得的开始时间开始读取基础信息数据库里面的原始股价信息
         print("读取的原始股票信息为： \n", stock_data)
 
-        stock_data_df = signaling_trade(stock_data, "SARIMAX")  # 调用生成策略数据函数，在原有的股价信息表里面添加计算出来的生成策略数据
+        stock_data_df = signaling_trade(stock_data, algorithm)  # 调用生成策略数据函数，在原有的股价信息表里面添加计算出来的生成策略数据
         print("计算的生成策略数据表为： \n", stock_data_df)
 
         # 将生成数据更新到数据库里面
@@ -458,6 +458,8 @@ if __name__ == "__main__":
 
     # 默认的更新时间
     default_time = '2019-01-01'
+
+    algorithm = 'LSTM'
 
     # 立即执行一次提取任务
     doer()
