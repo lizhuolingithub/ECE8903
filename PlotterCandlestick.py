@@ -211,7 +211,7 @@ def plotter(table, forecast, stock_name, day, color):
     axes[1].legend(['MACD', 'SignalLine'], loc='upper left')
 
     # 保存图像到文件
-    plt.savefig(f'stock_analysis_{day}.svg', dpi=1200)
+    plt.savefig(f'PlotterCandlestick/stock_analysis_{day}.svg', dpi=1200)
     plt.show()
 
 
@@ -222,7 +222,7 @@ if __name__ == "__main__":
                    'VUG', 'XLE']
 
     # 设置数据库的参数 连接数据库的信息（连接待生成策略数据的数据库）
-    db_config = {"host": "10.5.0.18", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "forecast"}
+    db_config = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "forecast"}
 
     predict_days = ['5d', '20d', '60d']
     colors = ['blue', 'green', 'red']

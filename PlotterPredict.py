@@ -74,7 +74,7 @@ def plot_individual_forecast(df, predict_day, algorithm, color, stock_code):
     plt.gcf().autofmt_xdate()
 
     # 保存图片
-    plt.savefig(f'{algorithm}_{stock_code}_{predict_day}.svg')
+    plt.savefig(f'PlotterPredict/{algorithm}_{stock_code}_{predict_day}.svg')
 
     plt.grid(True)
     plt.show()
@@ -121,7 +121,7 @@ def parse_arguments():
 if __name__ == "__main__":
 
     # 设置数据库的参数 连接数据库的信息（连接预测信息数据的数据库）
-    db_config_forecast = {"host": "10.5.0.18", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "forecast_gbm"}
+    db_config_forecast = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "forecast"}
 
     args = parse_arguments()
     plotter(args.algorithm, args.start, args.predict, args.end, args.stock_code)
