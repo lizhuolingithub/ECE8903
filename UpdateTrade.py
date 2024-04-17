@@ -28,6 +28,7 @@ def create_tables(cursor, stock_code):
         `Date` DATE NOT NULL COMMENT '交易日期',
         `Close` FLOAT COMMENT '收盘价格',
         `Transaction` VARCHAR(50) COMMENT '最终交易决定：buy, sell, hold',
+        `Returns` FLOAT COMMENT '根据买卖交易决定计算出来的收益率',
         `BuyComment` VARCHAR(255) COMMENT '买信号的位置',
         `SellComment` VARCHAR(255) COMMENT '卖信号的位置',
         `StateA` INT COMMENT '布林带状态：-3超出上端，-2 80-100%区间，-1 60-80%区间，0 40-60%区间，1 20-40%区间，2 0-20%区间，3超出下端',
@@ -64,7 +65,7 @@ def read_db(cursor, stock_code, start_time, algorithm):
             SELECT 
                 Date, Close, PredictProfit5d, PredictLoss5d, PredictProfit20d, PredictLoss20d, PredictSlope20d,
                 PredictProfit60d, PredictLoss60d, PredictSlope60d, BollingerChannel, MACDsign, Doji, 
-                RSIChannel, ComplexDoji, KDsign, CCI, WilliamsR
+                RSIChannel, ComplexDoji, KDsign, CCI, WilliamsR, OBV, OBV20ma, OBV2de
             FROM 
                 {stock_code}_combined
             WHERE 
@@ -80,7 +81,7 @@ def read_db(cursor, stock_code, start_time, algorithm):
         df = pd.DataFrame(result, columns=[
             'Date', 'Close', 'PredictProfit5d', 'PredictLoss5d', 'PredictProfit20d', 'PredictLoss20d', 'PredictSlope20d',
             'PredictProfit60d', 'PredictLoss60d', 'PredictSlope60d', 'BollingerChannel', 'MACDsign', 'Doji',
-            'RSIChannel', 'ComplexDoji', 'KDsign', 'CCI', 'WilliamsR'
+            'RSIChannel', 'ComplexDoji', 'KDsign', 'CCI', 'WilliamsR', 'OBV', 'OBV20ma', 'OBV2de'
         ])
 
         return df
@@ -94,8 +95,8 @@ def update_db(stock_code, stock_table_df, gotime, cursor, db_connection):
     insert_query = f"""
         INSERT INTO {stock_code}_trade
         (Date, Close, StateA, StateB, StateC, StateD, StateE, StateF, StateG, StateH, Point, Buy, Sell, BuyComment, SellComment, ForecastAlgorithm, 
-         Profit5day, Loss5day, Profit20day, Loss20day, Profit60day, Loss60day, Transaction)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+         Profit5day, Loss5day, Profit20day, Loss20day, Profit60day, Loss60day, Transaction, Returns)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
         Close=VALUES(Close),
         StateA=VALUES(StateA),
@@ -118,7 +119,8 @@ def update_db(stock_code, stock_table_df, gotime, cursor, db_connection):
         Loss20day=VALUES(Loss20day),
         Profit60day=VALUES(Profit60day),
         Loss60day=VALUES(Loss60day),
-        Transaction=VALUES(Transaction)
+        Transaction=VALUES(Transaction),
+        Returns=VALUES(Returns)
     """
 
     # 准备数据列表用于批量插入
@@ -130,7 +132,7 @@ def update_db(stock_code, stock_table_df, gotime, cursor, db_connection):
                           row['E'], row['F'], row['G'], row['H'], row['Point'], row['Buy'],
                           row['Sell'],row['BuyComment'], row['SellComment'], row['ForecastAlgorithm'], row['Profit5day'],
                           row['Loss5day'], row['Profit20day'], row['Loss20day'], row['Profit60day'], row['Loss60day'],
-                          row['Transaction'])
+                          row['Transaction'], row['Returns'])
             data_to_insert.append(data_tuple)
 
     # 执行批量插入
@@ -231,6 +233,41 @@ def calculate_complex_doji(df):
 
     return df['D']
 
+
+# 根据交易策略模拟交易计算收益率
+def trade_simulation(df):
+    """
+    Simulate trades based on Transaction signals and calculate the cumulative return.
+    """
+    initial_capital = 1000000  # initial capital in dollars
+    shares = 0
+    capital = initial_capital
+    portfolio_values = []
+
+    # Ensure transactions are in lowercase to avoid case sensitivity issues
+    df['Transaction'] = df['Transaction'].str.lower()
+
+    for i, row in df.iterrows():
+        # Debug print to see what's happening
+        # print(f"Date: {row['Date']}, Close: {row['Close']}, Transaction: {row['Transaction']}")
+
+        if row['Transaction'] == 'buy' and capital >= row['Close']:
+            shares = capital // row['Close']  # buy as many shares as possible
+            capital -= shares * row['Close']
+            # print(f"Bought {shares} shares, remaining capital: {capital}")
+        elif row['Transaction'] == 'sell' and shares > 0:
+            capital += shares * row['Close']
+            # print(f"Sold {shares} shares, new capital: {capital}")
+            shares = 0
+        # Record the portfolio value
+        portfolio_value = capital + shares * row['Close']
+        portfolio_values.append(portfolio_value)
+
+    df['Portfolio Value'] = portfolio_values
+    df['Returns'] = df['Portfolio Value'] / initial_capital - 1  # calculate returns
+
+    return df['Returns']
+
 # 根据各个指标状态和设定好的买卖点条件计算出买卖点的个数
 def add_trade_signals(df):
     # 定义买入条件
@@ -259,7 +296,6 @@ def add_trade_signals(df):
 
     # 返回包含'Buy'和'Sell'的新DataFrame
     return df[['Buy', 'Sell']]
-
 
 # 根据预定义的买入条件，计算并添加买入信号的注释字符串到DataFrame中。
 def add_trade_signals_comments(df):
@@ -393,6 +429,9 @@ def signaling_trade(stock_table, algorithm):
 
     # 最终买卖持有信号判断
     df['Transaction'] = calculate_transaction_signals(df)
+
+    # 根据上述的买卖信号计算出回报率
+    df['Returns'] = trade_simulation(df)
 
     # 将 NaN 值替换为0
     df.fillna(0, inplace=True)

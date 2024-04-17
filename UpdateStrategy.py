@@ -57,6 +57,8 @@ def create_tables(cursor, stock_code):
         `ROC` float DEFAULT NULL COMMENT 'Rate-of-Change, ROC）衡量价格变化幅度的指标',
         `WilliamsR` float DEFAULT NULL COMMENT '威廉姆斯%R（Williams %R）动量指标，识别超买和超卖条件',
         `OBV` float DEFAULT NULL COMMENT '均衡交易量（OBV） On Balance Volume 衡量买卖压力的技术指标，基于成交量的变化来预测价格趋势',
+        `OBV20ma` float DEFAULT NULL COMMENT '均衡交易量（OBV）20天的移动平均值',
+        `OBV2de` float DEFAULT NULL COMMENT '均衡交易量（OBV）2次导数',
         `Klinger` float DEFAULT NULL COMMENT '克林格指标 Klinger Indicator 判断价格趋势的强度和买卖信号',
         `CMF` float DEFAULT NULL COMMENT '查金资金流（CMF）Chaikin Money Flow 资金在股市中的流入和流出情况',
         `ComplexDoji` float DEFAULT NULL COMMENT '复杂蜡烛图指标 Candlestick Indicators 黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击，晨曦之星 1-6',
@@ -87,15 +89,14 @@ def read_db(cursor, stock_code, start_time):
     except Exception as e:
         print(f"Error fetching date for {stock_code}: {e}")
 
-
 # 将添加好的策略信息字段写入到数据库当中
 def update_stock_data(stock_code, stock_table_df, gotime, cursor, db_connection):
     # 准备批量插入的SQL语句，同时处理重复键的情况
     insert_query = f"""
         INSERT INTO {stock_code}_strategy 
         (Date, FastAvg, SlowAvg, MACD, SignalLine, MA, BollingerUp, BollingerDown, BollingerChannel, RSI, RSIChannel, Doji, ADX, MACDsign, 
-         K, D, KDsign, CCI, ROC, WilliamsR, OBV, Klinger, CMF, ComplexDoji) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+         K, D, KDsign, CCI, ROC, WilliamsR, OBV, OBV20ma, OBV2de, Klinger, CMF, ComplexDoji) 
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
         FastAvg=VALUES(FastAvg),
         SlowAvg=VALUES(SlowAvg),
@@ -117,6 +118,8 @@ def update_stock_data(stock_code, stock_table_df, gotime, cursor, db_connection)
         ROC=VALUES(ROC),
         WilliamsR=VALUES(WilliamsR),
         OBV=VALUES(OBV),
+        OBV20ma=VALUES(OBV20ma),
+        OBV2de=VALUES(OBV2de),
         Klinger=VALUES(Klinger),
         CMF=VALUES(CMF),
         ComplexDoji=VALUES(ComplexDoji)
@@ -126,7 +129,7 @@ def update_stock_data(stock_code, stock_table_df, gotime, cursor, db_connection)
     data_to_insert = [
         (index.date() if isinstance(index, datetime) else index, row['FastAvg'], row['SlowAvg'], row['MACD'], row['SignalLine'], row['MA'],
          row['BollingerUp'], row['BollingerDown'], row['BollingerChannel'], row['RSI'], row['RSIChannel'], row['Doji'], row['ADX'], row['MACDsign'],
-         row['K'], row['D'], row['KDsign'], row['CCI'], row['ROC'], row['WilliamsR'], row['OBV'], row['Klinger'], row['CMF'], row['ComplexDoji'])
+         row['K'], row['D'], row['KDsign'], row['CCI'], row['ROC'], row['WilliamsR'], row['OBV'], row['OBV20ma'], row['OBV2de'], row['Klinger'], row['CMF'], row['ComplexDoji'])
         for index, row in stock_table_df.iterrows()
         if (index.date() if isinstance(index, datetime) else index) >= gotime
     ]
@@ -581,6 +584,12 @@ def signaling_strategy(stock_table):
 
     # 计算均衡交易量（OBV） On Balance Volume
     df['OBV'] = calculate_obv(df)
+
+    # 计算均衡交易量（OBV）的20天移动平均值
+    df['OBV20ma'] = df['OBV'].rolling(window=20).mean()
+
+    # 计算均衡交易量（OBV）的二阶导数
+    df['OBV2de'] = df['OBV'].diff().diff()
 
     # 计算克林格指标 Klinger Indicator
     df['Klinger'] = calculate_klinger(df, fast=12, slow=26)

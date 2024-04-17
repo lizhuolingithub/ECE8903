@@ -212,6 +212,8 @@ SELECT
     s.ROC,
     s.WilliamsR,
     s.OBV,
+    s.OBV20ma,
+    s.OBV2de,
     s.Klinger,
     s.CMF,
     s.ComplexDoji
