@@ -6,5 +6,6 @@
     <file url="file://$PROJECT_DIR$/PlotterTrade.py" dialect="GenericSQL" />
     <file url="file://$PROJECT_DIR$/UpdateStrategy.py" dialect="GenericSQL" />
     <file url="file://$PROJECT_DIR$/UpdateTrade.py" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/test/UkraninianDB.py" dialect="MySQL" />
   </component>
 </project>
