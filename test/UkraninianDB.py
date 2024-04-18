@@ -1,16 +1,20 @@
 import pymysql
 import pandas as pd
 from flask import request, Flask, jsonify
+from flask_cors import CORS
 
 # 设置Flask程序接口
 app = Flask(__name__)
+CORS(app)
+
 
 def dataframe_to_json(df):
     """
-    Convert a pandas DataFrame to JSON format, with the 'Month' column formatted as 'yyyy-mm-dd'.
+    Convert a pandas DataFrame to JSON format, where the first entry is a list of column names
+    and the subsequent entries are lists of values.
 
     Parameters:
-    df (pd.DataFrame): The DataFrame to convert, expected to have a 'Month' column in datetime format.
+    df (pd.DataFrame): The DataFrame to convert.
 
     Returns:
     str: JSON string representing the DataFrame.
@@ -20,12 +24,15 @@ def dataframe_to_json(df):
         if 'Month' in df.columns and pd.api.types.is_datetime64_any_dtype(df['Month']):
             df['Month'] = df['Month'].dt.strftime('%Y-%m-%d')
 
-        # Convert the DataFrame to a JSON string
-        json_result = df.to_json(orient='records', date_format='iso')
+        # Construct a list with the first element being column names and the rest being data rows
+        data = [df.columns.tolist()] + df.values.tolist()
+
+        # Convert the list to a JSON string
+        json_result = jsonify(data)
         return json_result
     except Exception as e:
         print(f"Error converting DataFrame to JSON: {e}")
-        return None
+        return jsonify({'error': str(e)})
 
 @app.route('/price')
 def query_price():
@@ -130,8 +137,6 @@ def query_war():
 输入 省名称
 输出 该省全部的冲突及其数量
 """
-
-
 @app.route('/conflict')
 def query_conflict():
     # 获取查询字符串中的省份参数，如果没有提供，则默认为 'Cherkaska'

@@ -210,28 +210,28 @@ def get_update_time(cursor_read, cursor_update, read_suffix, update_suffix, stoc
 """
 def calculate_complex_doji(df):
 
-    # 定义条件
+    # Defining conditions
     conditions = [
-        (df['ComplexDoji'] == 6) & (df['BollingerChannel'] < 2),  # 晨曦之星，布林带低于40%
         (df['ComplexDoji'] == 5),  # 三线打击
+        (df['ComplexDoji'] == 6) & (df['BollingerChannel'] < 2),  # 晨曦之星，布林带低于40%
         (df['ComplexDoji'] == 0),  # 没有doji
-        (df['ComplexDoji'] == 3),  # 两只乌鸦
-        ((df['ComplexDoji'] == 1) | (df['ComplexDoji'] == 4)) & (df['BollingerChannel'] > 3)  # 黄昏之星或三只乌鸦，布林带高于60%
+        ((df['ComplexDoji'] == 1) | (df['ComplexDoji'] == 4)) & (df['BollingerChannel'] > 3),  # 黄昏之星或两只乌鸦，布林带高于60%
+        (df['ComplexDoji'] == 4),  # 三只乌鸦
     ]
 
-    # 对应的选择
+    # Corresponding choices for each condition
     choices = [
-        2,  # 晨曦之星 and 布林带低于40% 买
-        1,  # 三线打击
-        0,  # 没有doji
-        -1,  # 两只乌鸦
-        -2  # 黄昏之星或三只乌鸦 and 布林带高于60% 卖
+        3,   # 三线打击
+        2,   # 晨曦之星 and 布林带低于40% 买
+        0,   # 没有doji
+        -2,  # 黄昏之星 or 两只乌鸦
+        -3   # 三只乌鸦
     ]
 
-    # 使用 numpy.select 应用条件
-    df['D'] = np.select(conditions, choices, default=0)  # 如果没有条件匹配，默认为0 (没有doji)
+    # Apply conditions to determine the 'C' column
+    df['C'] = np.select(conditions, choices, default=0)  # Default to 0 (no action) if no conditions are met
 
-    return df['D']
+    return df['C']
 
 
 # 根据交易策略模拟交易计算收益率
@@ -272,20 +272,20 @@ def trade_simulation(df):
 def add_trade_signals(df):
     # 定义买入条件
     buy_conditions = [
-        df['B'] == 1,  # 1 macd下穿上信号线 买
-        df['D'] == 2,  # 2 晨曦之星 and 布林带低于40% 买
-        df['E'] == 1,  # 1 K线从下穿上D线 买
-        df['F'] == 2,  # 2 RSIChannel 0%-20% 买
-        df['G'] == 2   # 2 CCI<-200 买
+        df['A'] == 1,  # 1 macd下穿上信号线 买
+        df['B'] == 1,  # 2 晨曦之星 and 布林带低于40% 买
+        df['C'] == 1,  # 1 K线从下穿上D线 买
+        df['D'] == 2,  # 2 RSIChannel 0%-20% 买
+        df['E'] == 2   # 2 CCI<-200 买
     ]
 
     # 定义卖出条件
     sell_conditions = [
-        df['B'] == -1,  # -1 macd上穿下信号线 卖
-        df['D'] == -2,  # -2 黄昏之星 三只乌鸦 and 布林带高于60% 卖
-        df['E'] == -1,  # -1 K线从上穿下D线 卖
-        df['F'] == -2,  # -2 RSIChannel 80%-100% 卖
-        df['G'] == -2  # -2 CCI>200 卖
+        df['A'] == -1,  # -1 macd上穿下信号线 卖
+        df['B'] == -1,  # -2 黄昏之星 三只乌鸦 and 布林带高于60% 卖
+        df['C'] == -1,  # -1 K线从上穿下D线 卖
+        df['D'] == -2,  # -2 RSIChannel 80%-100% 卖
+        df['E'] == -2  # -2 CCI>200 卖
     ]
 
     # 使用np.where对每个条件进行判断，生成为1的布尔值矩阵，然后沿着行的方向求和
@@ -299,35 +299,47 @@ def add_trade_signals(df):
 
 # 根据预定义的买入条件，计算并添加买入信号的注释字符串到DataFrame中。
 def add_trade_signals_comments(df):
+    """
+    Update the DataFrame with comments based on trade signal conditions.
+
+    Args:
+    df (DataFrame): DataFrame containing the necessary columns for evaluating trade signals.
+
+    Returns:
+    DataFrame: Updated DataFrame with 'BuyComment' and 'SellComment' columns added.
+    """
 
     # 定义买卖的信号条件
     buy_conditions = {
-        'B': ("macd下穿上信号线", 'B', 1),
-        'D': ("晨曦之星且布林带低于40%", 'D', 2),
-        'E': ("K线从下穿上D线", 'E', 1),
-        'F': ("RSIChannel-80%-100%", 'F', 2),
-        'G': ("CCI<-200", 'G', 2)
+        'A': ("KD金叉布林带20%", 'A', 1),
+        'B': ("MACD金叉黄金交叉布林带20%", 'B', 1),
+        'C': ("三线打击或晨曦之星+小Doji布林带0-20%", 'C', 2),
+        'D': ("RSIchannel 0%-20%", 'D', 1),
+        'E': ("OBV当前值在20day avg之上且OBV 20天的二阶导数为正", 'E', 2)
     }
 
     sell_conditions = {
-        'B': ("macd上穿下信号", 'B', -1),
-        'D': ("黄昏之星或三只乌鸦且布林带高于60%", 'D', -2),
-        'E': ("K线从上穿下D线", 'E', -1),
-        'F': ("RSIChannel 80%-100%", 'F', -2),
-        'G': ("CCI>200", 'G', -2)
+        'A': ("KD死叉布林带80%", 'A', -1),
+        'B': ("MACD死叉死亡交叉布林带80%", 'B', -1),
+        'C': ("黄昏之星+小Doji布林带80-100% 或三只乌鸦", 'C', -2),
+        'D': ("RSIchannel 80%-100%", 'D', -1),
+        'E': ("OBV当前值在20day avg之下且OBV 20天的二阶导数为负", 'E', -2)
     }
 
     def get_signals(row, conditions):
-        # 使用行数据直接检查条件
+        """
+        Internal helper to extract signal descriptions from the row based on defined conditions.
+        """
+        # Extracting all descriptions where the condition is met
         signals = [desc for desc, col, value in conditions.values() if row[col] == value]
-        return "; ".join(signals)
+        return "; ".join(signals)  # Join all descriptions into a single string
 
-    # 应用函数，生成买入和卖出信号描述
+    # Apply the function to generate buy and sell comments
     df['BuyComment'] = df.apply(lambda row: get_signals(row, buy_conditions), axis=1)
     df['SellComment'] = df.apply(lambda row: get_signals(row, sell_conditions), axis=1)
 
-    # 返回买入和卖出信号描述的元组
     return df[['BuyComment', 'SellComment']]
+
 
 
 # 结合得分买点和卖点以及预测的结果设置最终地买、卖或持有信号
@@ -336,7 +348,7 @@ def calculate_transaction_signals(df):
     # 定义买入信号的条件
     buy_signal = (
             (df['Point'] > 0) &
-            (df['Buy'] > 0) &
+            # (df['Buy'] > 0) &
             (df['Loss5day'] > -5) &
             (df['Loss20day'] > -10) &
             (df['Loss60day'] > -20)
@@ -346,7 +358,7 @@ def calculate_transaction_signals(df):
     # 定义卖出信号的条件
     sell_signal = (
             (df['Point'] < 0) &
-            (df['Sell'] > 0) &
+            # (df['Sell'] > 0) &
             ((df['Loss5day'] < -5) | (df['Loss20day'] < -10) & (df['Loss60day'] < -20)) |
             ((df['PredictSlope20d'] < 0) & (df['PredictSlope60d'] < 0))
     )
@@ -361,6 +373,75 @@ def calculate_transaction_signals(df):
     return df['Transaction']
 
 
+def update_kd_bollinger_state(df):
+    """
+    Update the DataFrame with a new column 'A' based on the combined state of KD line crossings and Bollinger Band percentiles.
+
+    Args:
+    df (DataFrame): DataFrame containing the columns 'KDsign' and 'BollingerPercent'.
+
+    Returns:
+    DataFrame: Updated DataFrame with a new column 'A'.
+    """
+    # Define conditions for buy and sell signals
+    buy_condition = (df['KDsign'] == 1) & (df['BollingerChannel'] <= 1)
+    sell_condition = (df['KDsign'] == 2) & (df['BollingerChannel'] >= 5)
+
+    # 使用numpy select选择条件
+    df['A'] = np.select(
+        [buy_condition, sell_condition],
+        [1, -1],
+        default=0
+    )
+
+    return df['A']
+
+def update_macd_bollinger_state(df):
+    """
+    Update the DataFrame with a new column 'A' based on the combined state of KD line crossings and Bollinger Band percentiles.
+
+    Args:
+    df (DataFrame): DataFrame containing the columns 'KDsign' and 'BollingerPercent'.
+
+    Returns:
+    DataFrame: Updated DataFrame with a new column 'A'.
+    """
+    # Define conditions for buy and sell signals
+    buy_condition = (df['MACDsign'] == 1) & (df['BollingerChannel'] <= 1)
+    sell_condition = (df['MACDsign'] == 2) & (df['BollingerChannel'] >= 5)
+
+    # 使用numpy select选择条件
+    df['B'] = np.select(
+        [buy_condition, sell_condition],
+        [1, -1],
+        default=0
+    )
+
+    return df['B']
+
+def update_obv_state(df):
+    """
+    Update the DataFrame with a new column 'A' based on the combined state of KD line crossings and Bollinger Band percentiles.
+
+    Args:
+    df (DataFrame): DataFrame containing the columns 'KDsign' and 'BollingerPercent'.
+
+    Returns:
+    DataFrame: Updated DataFrame with a new column 'A'.
+    """
+    # Define conditions for buy and sell signals
+    buy_condition = (df['OBV'] > df['OBV20ma']) & (df['OBV2de'] > 0)
+    sell_condition = (df['OBV'] < df['OBV20ma']) & (df['OBV2de'] < 0)
+
+    # 使用numpy select选择条件
+    df['E'] = np.select(
+        [buy_condition, sell_condition],
+        [2, -2],
+        default=0
+    )
+
+    return df['E']
+
 """
 从股票策略信息得出交易状态的信息并写入到表格中
 参数-stock_table: DataFrame，股票交易信号数据。
@@ -372,7 +453,26 @@ def signaling_trade(stock_table, algorithm):
     df = stock_table.copy()
     df.set_index('Date', inplace=True)
 
-    # 状态A - 布林带
+    # 状态A - KD线结合 布林带
+    df['A'] = update_kd_bollinger_state(df)
+
+    # 状态B - MACDsign 结合 布林带
+    df['B'] = update_macd_bollinger_state(df)
+
+    # 状态C - Complex Doji
+    df['C'] = calculate_complex_doji(df)
+
+    # 状态D - RSIChannel
+    df['D'] = df['RSIChannel'].map({0: -1, 1: -1, 5: 1, 6: 1})
+
+    # 状态E - 随机振荡器 OBV OBV20ma OBV2de
+    df['E'] = df['KDsign'].map({1: -1, 2: 1, 0: 0})
+
+    df['F'] = 0
+    df['G'] = 0
+    df['H'] = 0
+    """
+        # 状态A - 布林带
     df['A'] = -1 * df['BollingerChannel'] + 3
 
     # 状态B - MACDsign
@@ -387,11 +487,6 @@ def signaling_trade(stock_table, algorithm):
     # 状态E - 随机振荡器 Stochastic Oscillator KD线
     df['E'] = df['KDsign'].map({1: -1, 2: 1, 0: 0})
 
-    df['F'] = 0
-    df['G'] = 0
-    df['H'] = 0
-    """
-    
     # 状态F - RSI
     df['F'] = -1 * df['RSIChannel'] + 3
     
