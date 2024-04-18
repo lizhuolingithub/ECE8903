@@ -31,8 +31,14 @@ def read_db(cursor, stock_code, start_time, end_time):
 def trade_simulation(df):
     """
     Simulate trades based on Transaction signals and calculate the cumulative return.
+
+    Args:
+    df (DataFrame): DataFrame that contains the Date, Close prices, and Transaction signals.
+
+    Returns:
+    DataFrame: Updated DataFrame with additional columns for portfolio values and returns.
     """
-    initial_capital = 1000000  # initial capital in dollars
+    initial_capital = 1000000  # Initial capital in dollars
     shares = 0
     capital = initial_capital
     portfolio_values = []
@@ -41,25 +47,29 @@ def trade_simulation(df):
     df['Transaction'] = df['Transaction'].str.lower()
 
     for i, row in df.iterrows():
-        # Debug print to see what's happening
         print(f"Date: {row['Date']}, Close: {row['Close']}, Transaction: {row['Transaction']}")
 
         if row['Transaction'] == 'buy' and capital >= row['Close']:
-            shares = capital // row['Close']  # buy as many shares as possible
-            capital -= shares * row['Close']
-            print(f"Bought {shares} shares, remaining capital: {capital}")
+            # Calculate the number of shares to buy
+            shares_to_buy = capital // row['Close']
+            shares += shares_to_buy
+            capital -= shares_to_buy * row['Close']
+            print(f"Bought {shares_to_buy} shares, remaining capital: {capital}")
+
         elif row['Transaction'] == 'sell' and shares > 0:
+            # Sell all shares
             capital += shares * row['Close']
             print(f"Sold {shares} shares, new capital: {capital}")
             shares = 0
-        # Record the portfolio value
+
+        # Record the portfolio value for this day
         portfolio_value = capital + shares * row['Close']
         portfolio_values.append(portfolio_value)
 
     df['Portfolio Value'] = portfolio_values
-    df['Returns'] = df['Portfolio Value'] / initial_capital - 1  # calculate returns
-    return df
+    df['Returns'] = df['Portfolio Value'] / initial_capital - 1  # Calculate returns relative to initial capital
 
+    return df
 
 
 """
