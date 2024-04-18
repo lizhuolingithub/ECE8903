@@ -387,13 +387,14 @@ def signaling_trade(stock_table, algorithm):
     # 状态E - 随机振荡器 Stochastic Oscillator KD线
     df['E'] = df['KDsign'].map({1: -1, 2: 1, 0: 0})
 
-    # 状态F - RSI
-    df['F'] = -1 * df['RSIChannel'] + 3
-
-
+    df['F'] = 0
     df['G'] = 0
     df['H'] = 0
     """
+    
+    # 状态F - RSI
+    df['F'] = -1 * df['RSIChannel'] + 3
+    
     # 状态G - 商品通道指数（Commodity Channel Index, CCI）
     df['G'] = np.where(df['CCI'] < -200, 2,
                        np.where(df['CCI'] < -100, 1,
