@@ -254,19 +254,19 @@ def trade_simulation(df):
     df['Transaction'] = df['Transaction'].str.lower()
 
     for i, row in df.iterrows():
-        print(f"Date: {row['Date']}, Close: {row['Close']}, Transaction: {row['Transaction']}")
+        # print(f"Date: {row['Date']}, Close: {row['Close']}, Transaction: {row['Transaction']}")
 
         if row['Transaction'] == 'buy' and capital >= row['Close']:
             # Calculate the number of shares to buy
             shares_to_buy = capital // row['Close']
             shares += shares_to_buy
             capital -= shares_to_buy * row['Close']
-            print(f"Bought {shares_to_buy} shares, remaining capital: {capital}")
+            # print(f"Bought {shares_to_buy} shares, remaining capital: {capital}")
 
         elif row['Transaction'] == 'sell' and shares > 0:
             # Sell all shares
             capital += shares * row['Close']
-            print(f"Sold {shares} shares, new capital: {capital}")
+            # print(f"Sold {shares} shares, new capital: {capital}")
             shares = 0
 
         # Record the portfolio value for this day
