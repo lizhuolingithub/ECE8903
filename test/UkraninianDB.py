@@ -1,5 +1,6 @@
 import pymysql
 import pandas as pd
+# 设置Flask程序接口
 from flask import request, Flask, jsonify
 from flask_cors import CORS
 
@@ -34,36 +35,41 @@ def dataframe_to_json(df):
         print(f"Error converting DataFrame to JSON: {e}")
         return jsonify({'error': str(e)})
 
+
 @app.route('/price')
 def query_price():
-    # 获取查询字符串中的省份参数，如果没有提供，则默认为 'Cherkaska'
     province = request.args.get('province', 'Cherkaska')
     Items = ['Beetroots', 'Bread', 'Butter', 'Chicken', 'Fuel', 'Potatoes']
     item_columns = ', '.join([f"MAX(CASE WHEN Item = '{item}' THEN Price END) AS `{item}`" for item in Items])
     try:
-        connection = pymysql.connect(**db_config)  # 创建连接
+        # 建立数据库连接
+        connection = pymysql.connect(**db_config)
         cursor = connection.cursor()
-        # 构造一个SQL查询，聚合每个月的不同消费品价格
+        # 构建SQL查询
         query = f"""
         SELECT DATE_FORMAT(Date, '%Y-%m') AS `Month`,
         {item_columns}
         FROM food_view
         WHERE Province = '{province}'
         GROUP BY DATE_FORMAT(Date, '%Y-%m')
-        ORDER BY DATE_FORMAT(Date, '%Y-%m')
+        ORDER BY DATE_FORMAT(Date, '%Y-%m');
         """
         cursor.execute(query)
-        result = cursor.fetchall()  # 获取所有结果行
+        result = cursor.fetchall()
         cursor.close()
         connection.close()
+
+        # 创建DataFrame
         columns = ['Month'] + Items
-        price = pd.DataFrame(result, columns=columns) if result else pd.DataFrame(columns=columns)
-        dataframe_to_json(price)
+        price_data = pd.DataFrame(result, columns=columns) if result else pd.DataFrame(columns=columns)
+
+        # 将DataFrame转换为JSON
+        result = dataframe_to_json(price_data)
+        return result
 
     except Exception as e:
         print(f"Error fetching data for {province}: {e}")
         return jsonify({'error': str(e)})
-
 
 """
 函数2-难民查询函数
@@ -137,6 +143,8 @@ def query_war():
 输入 省名称
 输出 该省全部的冲突及其数量
 """
+
+
 @app.route('/conflict')
 def query_conflict():
     # 获取查询字符串中的省份参数，如果没有提供，则默认为 'Cherkaska'
