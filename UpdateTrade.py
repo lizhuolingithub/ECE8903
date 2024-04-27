@@ -11,9 +11,7 @@ import pymysql
 import schedule
 import time
 from datetime import datetime, timedelta
-from dbutils.pooled_db import PooledDB
 import time
-from sqlalchemy import create_engine, text
 from apscheduler.schedulers.background import BackgroundScheduler
 
 ########################################################################################################################
@@ -472,12 +470,12 @@ def signaling_trade(stock_table, algorithm):
     # 状态C - Complex Doji
     df['C'] = calculate_complex_doji(df)
 
-    # 状态D - RSIChannel
-    df['D'] = df['RSIChannel'].map({0: -1, 1: -1, 5: 1, 6: 1})
+    # 状态F - RSI
+    df['D'] = -1 * df['RSIChannel'] + 3
 
     # 状态E - 随机振荡器 OBV OBV20ma OBV2de
-    df['E'] = df['KDsign'].map({1: -1, 2: 1, 0: 0})
-
+    # df['E'] = df['KDsign'].map({1: -1, 2: 1, 0: 0})
+    df['E'] = 0
     df['F'] = 0
     df['G'] = 0
     df['H'] = 0
@@ -508,11 +506,14 @@ def signaling_trade(stock_table, algorithm):
 
     # 状态H - 威廉姆斯%R
     df['H'] = np.where(df['WilliamsR'] < -80, 1,
-                       np.where(df['WilliamsR'] < -20, 0, -1))               
+                       np.where(df['WilliamsR'] < -20, 0, -1))  
+                       
+    # Point 也就是上述状态的点数之和
+    df['Point'] = df[['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']].sum(axis=1)                                
     """
 
     # Point 也就是上述状态的点数之和
-    df['Point'] = df[['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']].sum(axis=1)
+    df['Point'] = 2 * df[['A', 'B', 'C']].sum(axis=1) * df[['D', 'E']].sum(axis=1)
 
     # 分别返回计算买和卖的信号数量
     df[['Buy', 'Sell']] = add_trade_signals(df)

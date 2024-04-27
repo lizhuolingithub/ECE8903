@@ -76,8 +76,6 @@ def query_price():
 输入 省名称
 输出 按照月份变化的难民数量序列
 """
-
-
 @app.route('/refugee')
 def query_refugee():
     # 获取查询字符串中的省份参数，如果没有提供，则默认为 'Cherkaska'

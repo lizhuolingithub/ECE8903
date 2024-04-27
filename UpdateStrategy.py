@@ -19,12 +19,10 @@ import pymysql
 import schedule
 import time
 from datetime import datetime, timedelta
-from dbutils.pooled_db import PooledDB
 import time
 import pandas as pd
-from sqlalchemy import create_engine, text
 from apscheduler.schedulers.background import BackgroundScheduler
-
+import talib
 
 
 ########################################################################################################################
@@ -89,6 +87,7 @@ def read_db(cursor, stock_code, start_time):
     except Exception as e:
         print(f"Error fetching date for {stock_code}: {e}")
 
+
 # 将添加好的策略信息字段写入到数据库当中
 def update_stock_data(stock_code, stock_table_df, gotime, cursor, db_connection):
     # 准备批量插入的SQL语句，同时处理重复键的情况
@@ -127,9 +126,12 @@ def update_stock_data(stock_code, stock_table_df, gotime, cursor, db_connection)
 
     # 创建一个元组列表，包含所有要插入的数据
     data_to_insert = [
-        (index.date() if isinstance(index, datetime) else index, row['FastAvg'], row['SlowAvg'], row['MACD'], row['SignalLine'], row['MA'],
-         row['BollingerUp'], row['BollingerDown'], row['BollingerChannel'], row['RSI'], row['RSIChannel'], row['Doji'], row['ADX'], row['MACDsign'],
-         row['K'], row['D'], row['KDsign'], row['CCI'], row['ROC'], row['WilliamsR'], row['OBV'], row['OBV20ma'], row['OBV2de'], row['Klinger'], row['CMF'], row['ComplexDoji'])
+        (index.date() if isinstance(index, datetime) else index, row['FastAvg'], row['SlowAvg'], row['MACD'],
+         row['SignalLine'], row['MA'],
+         row['BollingerUp'], row['BollingerDown'], row['BollingerChannel'], row['RSI'], row['RSIChannel'], row['Doji'],
+         row['ADX'], row['MACDsign'],
+         row['K'], row['D'], row['KDsign'], row['CCI'], row['ROC'], row['WilliamsR'], row['OBV'], row['OBV20ma'],
+         row['OBV2de'], row['Klinger'], row['CMF'], row['ComplexDoji'])
         for index, row in stock_table_df.iterrows()
         if (index.date() if isinstance(index, datetime) else index) >= gotime
     ]
@@ -196,58 +198,18 @@ def get_update_time(cursor_read, cursor_update, read_suffix, update_suffix, stoc
         # 遇上其他情况，如读取表时间被写入表完全覆盖时，则从最新的时间谁最小减去一天开始更新
         return datetime.strptime(min(latest_update, latest_read), "%Y-%m-%d").date() - timedelta(days=1)
 
+
 ########################################################################################################################
 # 计算添加技术指标信息部分
 #########################################################################################################################
-
-
-"""
-计算平均方向移动指数（ADX）
-参数-stock_data: DataFrame，window: int，计算ADX所用的滚动窗口大小，默认为14天。
-返回- Series: 包含ADX值的Series。
-"""
-def calculate_adx(stock_data, window=14):
-    def calculate_tr(high, low, close):
-        # 计算真实范围
-        previous_close = close.shift(1)
-        tr = pd.DataFrame({'high_low': high - low,
-                           'high_close': np.abs(high - previous_close),
-                           'low_close': np.abs(low - previous_close)})
-        return tr.max(axis=1)
-
-    def calculate_dm(high, low):
-        # 计算方向移动
-        plus_dm = high.diff()
-        minus_dm = low.diff()
-        return plus_dm, minus_dm
-
-    # 计算真实范围TR
-    tr = calculate_tr(stock_data['High'], stock_data['Low'], stock_data['AdjClose'])
-    tr_smooth = tr.rolling(window=window).sum()
-
-    # 计算方向移动DM
-    plus_dm, minus_dm = calculate_dm(stock_data['High'], stock_data['Low'])
-    plus_dm_smooth = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0).rolling(window=window).sum()
-    minus_dm_smooth = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0).rolling(window=window).sum()
-
-    # 计算方向指标DI
-    plus_di = 100 * plus_dm_smooth / tr_smooth
-    minus_di = 100 * minus_dm_smooth / tr_smooth
-
-    # 计算动向指数DX
-    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
-
-    # 计算平均动向指数ADX
-    adx = dx.rolling(window=window).mean()
-
-    return adx
-
 
 """
 根据给定的股票交易数据行来分类Doji星形态。
 参数-row: DataFrame的行，包含Open, AdjClose, High, Low。
 返回-int: Doji星形态的类型编号。
 """
+
+
 def classify_doji(row):
     # 计算实体大小和上下影线长度
     body_size = abs(row['Open'] - row['AdjClose'])
@@ -274,42 +236,42 @@ def classify_doji(row):
 
 
 """
-计算相对强弱指数（Relative Strength Index, RSI）。
-参数-stock_data: DataFrame
-返回-Series: 计算得到的RSI值。
+计算两条线的交叉信号
+参数: fast_line: DataFrame列，代表快速线，如MACD线；slow_line: DataFrame列，代表慢速线，如信号线
+返回: Series: 根据两线的交叉情况计算得到的交叉信号，
+1表示快速线向上穿过慢速线，2表示快速线向下穿过慢速线，0表示无穿越。
 """
-def calculate_RSI(stock_data, window=14):
-    change = stock_data['AdjClose'].diff()
-    gain = change.apply(lambda x: x if x > 0 else 0)
-    loss = change.apply(lambda x: -x if x < 0 else 0)
-
-    avg_gain = gain.rolling(window=window).mean()
-    avg_loss = loss.rolling(window=window).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
 
 
-"""
-计算MACD交叉信号
-参数-stock_data: DataFrame
-返回-Series: 计算得到的MACD交叉信号，1表示MACD向上穿过信号线，2表示MACD向下穿过信号线，0表示无穿越。
-"""
-def calculate_macd_signal(stock_data):
-    macd_sign = np.where(
-        (stock_data['MACD'] > stock_data['SignalLine']) &
-        (stock_data['MACD'].shift(1) < stock_data['SignalLine'].shift(1)),
-        1,  # MACD向上穿过信号线
+def calculate_crossover(fast_line, slow_line):
+    crossover_signal = np.where(
+        (fast_line > slow_line) &
+        (fast_line.shift(1) < slow_line.shift(1)),
+        1,  # 快速线向上穿过慢速线
         np.where(
-            (stock_data['MACD'] < stock_data['SignalLine']) &
-            (stock_data['MACD'].shift(1) > stock_data['SignalLine'].shift(1)),
-            2,  # MACD向下穿过信号线
+            (fast_line < slow_line) &
+            (fast_line.shift(1) > slow_line.shift(1)),
+            2,  # 快速线向下穿过慢速线
             0  # 无穿越
         )
     )
-    return macd_sign
+    return crossover_signal
+
+
+"""
+将RSI指标映射到1-5的范围。
+参数-rsi: float，原始的RSI值，范围在0到100之间。
+返回-int: 映射到1-5范围的RSI值，1-5分别表示较低到较高的RSI水平。
+"""
+
+
+def map_rsi(rsi):
+    if np.isnan(rsi):
+        return 0  # 或者返回其他合适的数值
+    rsi_min = 0
+    rsi_max = 100
+    mapped_rsi = int(np.ceil((rsi - rsi_min) / (rsi_max - rsi_min) * 4 + 1))
+    return mapped_rsi
 
 
 """
@@ -317,6 +279,8 @@ def calculate_macd_signal(stock_data):
 参数-df: DataFrame，包含'AdjClose', 'BollingerDown', 'BollingerUp'列的股票数据。
 返回-int: 表示每日股价所在通道的分类（0-6）。
 """
+
+
 def calculate_channel(row):
     # 计算布林带的中线和四分点
     bollinger_mid = (row['BollingerUp'] + row['BollingerDown']) / 2
@@ -343,70 +307,12 @@ def calculate_channel(row):
 
 
 """
-计算随机振荡器指标。
-参数:
-df-DataFrame， k_period: int，，默认为14天。d_period: int，默认为3天。
-返回-DataFrame: 包含'%K'和'%D'列的DataFrame。
-"""
-def calculate_stochastic_oscillator(df, k_period=14, d_period=3):
-    # 计算%K线
-    low_min = df['Low'].rolling(window=k_period).min()
-    high_max = df['High'].rolling(window=k_period).max()
-    df['%K'] = ((df['AdjClose'] - low_min) / (high_max - low_min)) * 100
-
-    # 计算%D线（%K线的移动平均）
-    df['%D'] = df['%K'].rolling(window=d_period).mean()
-
-    return df[['%K', '%D']]
-
-
-"""
-计算商品通道指数（CCI）。
-参数-df: DataFrame，包含股票交易数据，至少包括'High', 'Low', 和 'Close'列, n: int，，默认为20天。
-返回-Series: 包含CCI值的Series。
-"""
-
-
-def calculate_cci(df, window=20):
-    # 计算典型价格
-    TP = (df['High'] + df['Low'] + df['Close']) / 3
-
-    # 计算TP的n期SMA
-    TP_SMA = TP.rolling(window=window).mean()
-
-    # 计算平均偏差
-    mean_deviation = TP.rolling(window=window).apply(lambda x: np.fabs(x - x.mean()).mean(), raw=True)
-
-    # 计算CCI
-    CCI = (TP - TP_SMA) / (0.015 * mean_deviation)
-
-    return CCI
-
-
-"""
-计算均衡交易量（OBV） On Balance Volume
-参数-df: DataFrame，包含股票交易数据，至少包含'Close'和'Volume'列。
-返回-Series: 包含OBV值的Series。
-"""
-def calculate_obv(df):
-    obv = pd.Series(index=df.index, data=0)
-    obv.iloc[0] = df['Volume'].iloc[0]
-
-    for i in range(1, len(df)):
-        if df['Close'].iloc[i] > df['Close'].iloc[i - 1]:
-            obv.iloc[i] = obv.iloc[i - 1] + df['Volume'].iloc[i]
-        elif df['Close'].iloc[i] < df['Close'].iloc[i - 1]:
-            obv.iloc[i] = obv.iloc[i - 1] - df['Volume'].iloc[i]
-        else:
-            obv.iloc[i] = obv.iloc[i - 1]
-    return obv
-
-
-"""
 计算克林格指标 Klinger Indicator
 参数-df: DataFrame，包含股票交易数据，'High', 'Low', 'Close'和'Volume'；fast: 快速EMA周期；slow: 慢速EMA周期。
 返回-DataFrame: 包含克林格指标值的DataFrame。
 """
+
+
 def calculate_klinger(df, fast=12, slow=26):
     # 计算真实流通量
     dm = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
@@ -423,6 +329,8 @@ def calculate_klinger(df, fast=12, slow=26):
 参数-df: DataFrame，至少包含'High', 'Low', 'Close'和'Volume'，n: int，用于计算CMF的周期，默认为20天。
 返回-Series: 包含CMF值的Series。
 """
+
+
 def calculate_cmf(df, window=20):
     mfm = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
     mfm.fillna(0, inplace=True)
@@ -431,98 +339,49 @@ def calculate_cmf(df, window=20):
     cmf = mf_volume.rolling(window=window).sum() / df['Volume'].rolling(window=window).sum()
     return cmf
 
+
 """
 检测特定的蜡烛图形态并在新列中标注。
 参数-df: DataFrame，包含股票交易数据，至少包含'Open', 'High', 'Low', 'Close'列。
 返回-Series: 标注了蜡烛图指标的Series，1-6分别代表黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击，晨曦之星
 """
+
+
 def detect_candlestick_patterns(df):
-    patterns = pd.Series(index=df.index, data=0)  # 初始化蜡烛图指标列为0
+    # 初始化蜡烛图指标列为0
+    df['ComplexDoji'] = 0
 
-    # 预先计算常见条件以简化条件检查
-    bull_candle = df['Close'] > df['Open']
-    bear_candle = df['Close'] < df['Open']
-    upper_shadow = df['High'] - np.maximum(df['Close'], df['Open'])
-    lower_shadow = np.minimum(df['Close'], df['Open']) - df['Low']
-    body_size = np.abs(df['Close'] - df['Open'])
+    # 检测黄昏之星
+    evening_star = talib.CDLEVENINGSTAR(df['Open'], df['High'], df['Low'], df['Close'])
+    df.loc[evening_star != 0, 'ComplexDoji'] = 1  # 黄昏之星标记为1
 
-    # 黄昏之星
-    evening_star_cond = (
-        bull_candle.shift(2) & bear_candle.shift(1) & bear_candle &
-        (lower_shadow.shift(1) > body_size.shift(2) * 0.5) &  # 第一根蜡烛和中间一根蜡烛之间的弱差距
-        (df['Close'] < df['Open'].shift(2))
-    )
-    patterns[evening_star_cond] = 1
+    # 检测弃婴，仅当没有先前检测到形态时
+    if not df['ComplexDoji'].any():  # 检查是否已经有任何非0值
+        abandoned_baby = talib.CDLABANDONEDBABY(df['Open'], df['High'], df['Low'], df['Close'])
+        df.loc[abandoned_baby != 0, 'ComplexDoji'] = 2  # 弃婴标记为2
 
-    # 弃婴
-    abandoned_baby_cond = (
-        bear_candle.shift(2) & (df['High'].shift(1) < df['Low'].shift(2)) & (df['High'].shift(1) < df['Low']) &
-        bull_candle
-    )
-    patterns[abandoned_baby_cond] = 2
+    # 检测两只乌鸦，仅当没有先前检测到形态时
+    if not df['ComplexDoji'].any():
+        two_crows = talib.CDL2CROWS(df['Open'], df['High'], df['Low'], df['Close'])
+        df.loc[two_crows != 0, 'ComplexDoji'] = 3  # 两只乌鸦标记为3
 
-    # 两只乌鸦
-    two_crows_cond = (
-        bull_candle.shift(2) & bear_candle.shift(1) & bear_candle &
-        (df['Open'].shift(1) < df['Close'].shift(2)) & (df['Close'] < df['Open'])
-    )
-    patterns[two_crows_cond] = 3
+    # 检测三只乌鸦，仅当没有先前检测到形态时
+    if not df['ComplexDoji'].any():
+        three_black_crows = talib.CDL3BLACKCROWS(df['Open'], df['High'], df['Low'], df['Close'])
+        df.loc[three_black_crows != 0, 'ComplexDoji'] = 4  # 三只乌鸦标记为4
 
-    # 三只乌鸦
-    three_black_crows_cond = (
-        bull_candle.shift(2) & bear_candle.shift(1) & bear_candle &
-        (df['Close'].shift(1) < df['Open'].shift(1)) & (df['Close'] < df['Close'].shift(1))
-    )
-    patterns[three_black_crows_cond] = 4
+    # 检测三线打击，仅当没有先前检测到形态时
+    if not df['ComplexDoji'].any():
+        three_line_strike = talib.CDL3LINESTRIKE(df['Open'], df['High'], df['Low'], df['Close'])
+        df.loc[three_line_strike != 0, 'ComplexDoji'] = 5  # 三线打击标记为5
 
-    # 三线打击
-    three_line_strike_cond = (
-        bear_candle.shift(2) & bear_candle.shift(1) & bull_candle &
-        (df['Close'] > df['Open'].shift(2))
-    )
-    patterns[three_line_strike_cond] = 5
+    # 检测晨曦之星，仅当没有先前检测到形态时
+    if not df['ComplexDoji'].any():
+        morning_star = talib.CDLMORNINGSTAR(df['Open'], df['High'], df['Low'], df['Close'])
+        df.loc[morning_star != 0, 'ComplexDoji'] = 6  # 晨曦之星标记为6
 
-    # 晨曦之星
-    morning_star_cond = (
-        bull_candle.shift(2) & bear_candle.shift(1) & bull_candle &
-        (df['Close'].shift(1) > df['Low'].shift(2)) & (df['Close'] > df['Open'].shift(2))
-    )
-    patterns[morning_star_cond] = 6
+    return df['ComplexDoji']
 
-    return patterns
-
-
-
-"""
-将RSI指标映射到1-5的范围。
-参数-rsi: float，原始的RSI值，范围在0到100之间。
-返回-int: 映射到1-5范围的RSI值，1-5分别表示较低到较高的RSI水平。
-"""
-def map_rsi(rsi):
-    if np.isnan(rsi):
-        return 0  # 或者返回其他合适的数值
-    rsi_min = 0
-    rsi_max = 100
-    mapped_rsi = int(np.ceil((rsi - rsi_min) / (rsi_max - rsi_min) * 4 + 1))
-    return mapped_rsi
-
-"""
-计算随机振荡器的交叉
-参数：df:DataFrame，包含表示随机振荡器值的列“K”和“D”。
-返回：系列：计算的随机交叉信号，1表示D以上的K交叉，2表示D以下的K交叉；0表示无交叉。
-"""
-def calculate_stochastic_crossovers(df):
-
-    kd_sign = np.where(
-        (df['K'] > df['D']) & (df['K'].shift(1) < df['D'].shift(1)),
-        1,  # 1 代表K线从下穿上D线
-        np.where(
-            (df['K'] < df['D']) & (df['K'].shift(1) > df['D'].shift(1)),
-            2,  # 2 代表K线从上穿下D线
-            0  # 0即没有
-        )
-    )
-    return pd.Series(kd_sign, index=df.index)
 
 """
 从股票交易表格中计算并添加交易策略信息字段。
@@ -538,20 +397,19 @@ def signaling_strategy(stock_table):
     df['FastAvg'] = df['AdjClose'].rolling(window=12).mean()
     df['SlowAvg'] = df['AdjClose'].rolling(window=26).mean()
 
-    # 计算布林带
-    df['MA'] = (df['High'] + df['Low'] + df['AdjClose']).rolling(window=20).mean() / 3
-    df['BollingerUp'] = df['MA'] + 2 * df['AdjClose'].rolling(window=20).std()
-    df['BollingerDown'] = df['MA'] - 2 * df['AdjClose'].rolling(window=20).std()
+    # 通常布林带的计算是基于收盘价的，这里使用调整后收盘价（AdjClose）
+    df['MA'], df['BollingerUp'], df['BollingerDown'] = talib.BBANDS(
+        df['AdjClose'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
 
     # 计算MACD（快线减慢线）以及其信号线（MACD的9天移动平均）
-    df['MACD'] = df['FastAvg'] - df['SlowAvg']
-    df['SignalLine'] = df['MACD'].rolling(window=9).mean()
+    df['MACD'], df['SignalLine'], df['MACDHistogram'] = talib.MACD(
+        df['AdjClose'], fastperiod=12, slowperiod=26, signalperiod=9)
 
     # MACD信号
-    df['MACDsign'] = calculate_macd_signal(df)
+    df['MACDsign'] = calculate_crossover(df['MACD'], df['SignalLine'])
 
     # 计算RSI
-    df['RSI'] = calculate_RSI(df, window=14)
+    df['RSI'] = talib.RSI(df['AdjClose'], timeperiod=14)
 
     # 计算RSI channel 映射RSI到1-5范围
     df['RSIChannel'] = df['RSI'].apply(map_rsi)
@@ -560,36 +418,37 @@ def signaling_strategy(stock_table):
     df['Doji'] = df.apply(classify_doji, axis=1)
 
     # 计算ADX
-    df['ADX'] = calculate_adx(df, window=14)
+    df['ADX'] = talib.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
 
     # 计算基于布林带的Channel通道
     df['BollingerChannel'] = df.apply(calculate_channel, axis=1)
 
     # 计算随机振荡器 Stochastic Oscillator
-    df[['K', 'D']] = calculate_stochastic_oscillator(df)
+    df['K'], df['D'] = talib.STOCH(df['High'], df['Low'], df['Close'],
+                                   fastk_period=5,
+                                   slowk_period=3, slowk_matype=0,
+                                   slowd_period=3, slowd_matype=0)
 
     # 计算K D线 是否上下交叉的信号
-    df['KDsign'] = calculate_stochastic_crossovers(df)
+    df['KDsign'] = calculate_crossover(df['K'], df['D'])
 
     # 商品通道指数 计算CCI
-    df['CCI'] = calculate_cci(df, window=20)
+    df['CCI'] = talib.CCI(df['High'], df['Low'], df['Close'], timeperiod=20)
 
     # Momentum 动量指标 计算Rate-of-Change ROC
-    df['ROC'] = ((df['Close'] / df['Close'].shift(14)) - 1) * 100
+    df['ROC'] = talib.ROC(df['Close'], timeperiod=14)
 
     # 计算威廉姆斯 % R指标 Williams %R
-    highest_high = df['High'].rolling(window=14).max()
-    lowest_low = df['Low'].rolling(window=14).min()
-    df['WilliamsR'] = ((highest_high - df['Close']) / (highest_high - lowest_low)) * -100
+    df['WilliamsR'] = talib.WILLR(df['High'], df['Low'], df['Close'], timeperiod=14)
 
     # 计算均衡交易量（OBV） On Balance Volume
-    df['OBV'] = calculate_obv(df)
+    df['OBV'] = talib.OBV(df['Close'], df['Volume'])
 
     # 计算均衡交易量（OBV）的20天移动平均值
     df['OBV20ma'] = df['OBV'].rolling(window=20).mean()
 
-    # 计算均衡交易量（OBV）的二阶导数
-    df['OBV2de'] = df['OBV'].diff().diff()
+    # 计算均衡交易量（OBV）的一阶导数
+    df['OBV2de'] = df['OBV'].diff() / df['OBV'].rolling(window=1).mean()
 
     # 计算克林格指标 Klinger Indicator
     df['Klinger'] = calculate_klinger(df, fast=12, slow=26)
@@ -613,7 +472,6 @@ def signaling_strategy(stock_table):
 
 # 执行任务主函数，将上述的函数集合到一次任务当中执行
 def doer():
-
     # 连接读取基础信息数据库信息
     db_connection_basedata = pymysql.connect(**db_config)
     cursor_basedata = db_connection_basedata.cursor()
@@ -639,7 +497,6 @@ def doer():
         # 将生成策略数据更新到数据库里面
         update_stock_data(stock_code, stock_data_df, update_time, cursor_strategy, db_connection_strategy)
 
-
     print("\n本次任务结束，已经完全将策略数据更新完毕\n")
 
     cursor_basedata.close()
@@ -656,10 +513,12 @@ if __name__ == "__main__":
                    'VUG', 'XLE']
 
     # 设置数据库的参数 连接数据库的信息（连接待基础数据的数据库）
-    db_config = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "basedata"}
+    db_config = {"host": "101.37.77.232", "port": 8903, "user": "lizhuolin", "password": "123456",
+                 "database": "basedata"}
 
     # 设置数据库的参数 连接数据库的信息（连接待生成策略数据的数据库）
-    db_config_strategy = {"host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456", "database": "strategy"}
+    db_config_strategy = {"host": "101.37.77.232", "port": 8903, "user": "lizhuolin", "password": "123456",
+                          "database": "strategy"}
 
     # "host": "10.5.0.11", "port": 3306, "user": "lizhuolin", "password": "123456"
     # "host": "8.147.99.223", "port": 3306, "user": "lizhuolin", "password": "&a3sFD*432dfD!o0#3^dP2r2d!sc@"
