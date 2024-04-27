@@ -208,8 +208,6 @@ def get_update_time(cursor_read, cursor_update, read_suffix, update_suffix, stoc
 参数-row: DataFrame的行，包含Open, AdjClose, High, Low。
 返回-int: Doji星形态的类型编号。
 """
-
-
 def classify_doji(row):
     # 计算实体大小和上下影线长度
     body_size = abs(row['Open'] - row['AdjClose'])
@@ -241,8 +239,6 @@ def classify_doji(row):
 返回: Series: 根据两线的交叉情况计算得到的交叉信号，
 1表示快速线向上穿过慢速线，2表示快速线向下穿过慢速线，0表示无穿越。
 """
-
-
 def calculate_crossover(fast_line, slow_line):
     crossover_signal = np.where(
         (fast_line > slow_line) &
@@ -263,8 +259,6 @@ def calculate_crossover(fast_line, slow_line):
 参数-rsi: float，原始的RSI值，范围在0到100之间。
 返回-int: 映射到1-5范围的RSI值，1-5分别表示较低到较高的RSI水平。
 """
-
-
 def map_rsi(rsi):
     if np.isnan(rsi):
         return 0  # 或者返回其他合适的数值
@@ -279,8 +273,6 @@ def map_rsi(rsi):
 参数-df: DataFrame，包含'AdjClose', 'BollingerDown', 'BollingerUp'列的股票数据。
 返回-int: 表示每日股价所在通道的分类（0-6）。
 """
-
-
 def calculate_channel(row):
     # 计算布林带的中线和四分点
     bollinger_mid = (row['BollingerUp'] + row['BollingerDown']) / 2
@@ -311,8 +303,6 @@ def calculate_channel(row):
 参数-df: DataFrame，包含股票交易数据，'High', 'Low', 'Close'和'Volume'；fast: 快速EMA周期；slow: 慢速EMA周期。
 返回-DataFrame: 包含克林格指标值的DataFrame。
 """
-
-
 def calculate_klinger(df, fast=12, slow=26):
     # 计算真实流通量
     dm = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
@@ -329,8 +319,6 @@ def calculate_klinger(df, fast=12, slow=26):
 参数-df: DataFrame，至少包含'High', 'Low', 'Close'和'Volume'，n: int，用于计算CMF的周期，默认为20天。
 返回-Series: 包含CMF值的Series。
 """
-
-
 def calculate_cmf(df, window=20):
     mfm = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
     mfm.fillna(0, inplace=True)
@@ -345,8 +333,6 @@ def calculate_cmf(df, window=20):
 参数-df: DataFrame，包含股票交易数据，至少包含'Open', 'High', 'Low', 'Close'列。
 返回-Series: 标注了蜡烛图指标的Series，1-6分别代表黄昏之星，弃婴，两只乌鸦，三只乌鸦，三线打击，晨曦之星
 """
-
-
 def detect_candlestick_patterns(df):
     # 初始化蜡烛图指标列为0
     df['ComplexDoji'] = 0
