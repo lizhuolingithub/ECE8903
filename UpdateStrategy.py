@@ -74,7 +74,7 @@ def read_db(cursor, stock_code, start_time):
         query = f"""
             SELECT Date, Open, High, Low, Close, AdjClose, Volume
             FROM {stock_code}_base
-            WHERE Date >= DATE_SUB(%s, INTERVAL 60 DAY) #读取时间开始前30天的数据
+            WHERE Date >= DATE_SUB(%s, INTERVAL 30 DAY) #读取时间开始前30天的数据
             ORDER BY Date ASC;
         """
         cursor.execute(query, (formatted_time,))  # 参数化查询
