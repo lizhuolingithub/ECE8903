@@ -257,7 +257,8 @@ if __name__ == "__main__":
 
     for stock_code in stock_codes:
 
-        setview_tables(cursor, stock_code, db_connection)  # 创建视图
+
+        setview_tables(cursor, stock_code, db_connection)# 创建视图
 
         """
         for predict_day in predict_days:

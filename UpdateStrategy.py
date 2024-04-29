@@ -342,7 +342,7 @@ def detect_candlestick_patterns(df):
     df.loc[evening_star != 0, 'ComplexDoji'] = 1  # 黄昏之星标记为1
 
     # 检测弃婴，仅当没有先前检测到形态时
-    if not df['ComplexDoji'].any():  # 检查是否已经有任何非0值
+    if not df['ComplexDoji'].any():  # 检查是否已经有任何非零值
         abandoned_baby = talib.CDLABANDONEDBABY(df['Open'], df['High'], df['Low'], df['Close'])
         df.loc[abandoned_baby != 0, 'ComplexDoji'] = 2  # 弃婴标记为2
 
