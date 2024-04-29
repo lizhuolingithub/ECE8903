@@ -4,12 +4,8 @@ Zhuolin Li
 
 """
 import numpy as np
-from apscheduler.schedulers.background import BackgroundScheduler
-import yfinance as yf
 import pandas as pd
 import pymysql
-import schedule
-import time
 from datetime import datetime, timedelta
 import time
 from apscheduler.schedulers.background import BackgroundScheduler

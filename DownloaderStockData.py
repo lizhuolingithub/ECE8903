@@ -12,9 +12,7 @@ Zhuolin Li
 
 from apscheduler.schedulers.background import BackgroundScheduler
 import yfinance as yf
-import pandas as pd
 import pymysql
-import schedule
 import time
 import datetime
 

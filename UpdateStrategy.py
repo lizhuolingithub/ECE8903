@@ -12,12 +12,7 @@ Zhuolin Li
 7.设定为交易日收盘后定时更新，以及初次运行该脚本时更新一次
 """
 import numpy as np
-from apscheduler.schedulers.background import BackgroundScheduler
-import yfinance as yf
-import pandas as pd
 import pymysql
-import schedule
-import time
 from datetime import datetime, timedelta
 import time
 import pandas as pd

@@ -36,7 +36,7 @@ from keras.models import Sequential
 from keras.layers import LSTM, Dropout, Dense
 import tensorflow as tf
 import argparse
-from pandas.tseries.offsets import BDay
+
 
 
 ########################################################################################################################

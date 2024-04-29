@@ -6,7 +6,7 @@ import pandas as pd
 import pymysql
 from datetime import datetime
 import matplotlib.pyplot as plt
-from pandas.plotting import register_matplotlib_converters
+
 
 
 """

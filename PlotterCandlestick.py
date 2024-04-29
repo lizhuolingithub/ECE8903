@@ -8,12 +8,9 @@ Plot绘图的脚本为收集到的股价信息绘制静态图像看板
 3.分割表格当中的所有列存在临时变量当中
 4.使用这些临时变量绘制并输出静态的股票看板
 """
-from apscheduler.schedulers.background import BackgroundScheduler
-import yfinance as yf
+
 import pandas as pd
 import pymysql
-import schedule
-import time
 from datetime import datetime, date, timedelta
 import matplotlib.pyplot as plt
 import mplfinance as mpf

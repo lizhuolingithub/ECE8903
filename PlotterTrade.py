@@ -3,7 +3,6 @@
 """
 import argparse
 import os
-
 import pandas as pd
 import pymysql
 from datetime import datetime
